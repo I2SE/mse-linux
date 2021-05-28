@@ -1,0 +1,43 @@
+* Mediatek MSE102x (SPI)
+
+The Mediatek MSE102x is a family of Homeplug GreenPHY chips. They can be
+connected either via RGMII, RMII or SPI to a host CPU.
+
+In order to use the MSE102x as SPI device it must be defined as a child of a
+SPI master in the device tree.
+
+Required properties:
+- compatible	    : Should be "mediatek,mse1021" or "mediatek,mse1022"
+- reg		    : Should specify the SPI chip select
+- interrupts	    : The first cell should specify the index of the source
+		      interrupt and the second cell should specify the trigger
+		      type as rising edge
+- spi-cpha	    : Must be set
+- spi-cpol	    : Must be set
+
+Optional properties:
+- spi-max-frequency : Maximum frequency of the SPI bus the chip can operate at.
+		      Numbers smaller than 1000000 or greater than 7000000
+		      are invalid. Missing the property will set the SPI
+		      frequency to 6000000 Hertz.
+
+The MAC address will be determined using the optional properties
+defined in ethernet.txt.
+
+Example:
+
+@spi0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	mse1021: ethernet@0 {
+		compatible = "mediatek,mse1021";
+		reg = <0>;
+		interrupt-parent = <&gpio>;
+		interrupts = <23 0x1>;		/* rising edge */
+		spi-cpha;			/* SPI mode: CPHA=1 */
+		spi-cpol;			/* SPI mode: CPOL=1 */
+		spi-max-frequency = <7000000>;
+		local-mac-address = [ A0 B0 C0 D0 E0 F0 ];
+	};
+};
