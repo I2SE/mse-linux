@@ -35,6 +35,20 @@ struct mse102x_net_spi {
 
 #define to_mse102x_spi(mse) container_of((mse), struct mse102x_net_spi, mse102x)
 
+#define DET_CMD		0x0001
+#define DET_SOF		0x0002
+#define DET_DFT		0x55AA
+
+#define CMD_SHIFT	12
+#define CMD_RTS		(0x1 << CMD_SHIFT)
+#define CMD_CTR		(0x2 << CMD_SHIFT)
+
+#define LEN_MASK	GENMASK(CMD_SHIFT - 1, 0)
+
+#define	DET_CMD_LEN	4
+#define	DET_SOF_LEN	2
+#define	DET_DFT_LEN	2
+
 /* SPI frame opcodes */
 #define KS_SPIOP_RD	0x00
 #define KS_SPIOP_WR	0x40
