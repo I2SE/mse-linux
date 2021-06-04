@@ -323,7 +323,6 @@ struct mse102x_net {
 	u8			fid;
 
 	u16			rc_rxqcr;
-	u16			rc_ccr;
 
 	struct mse102x_rxctrl	rxctrl;
 

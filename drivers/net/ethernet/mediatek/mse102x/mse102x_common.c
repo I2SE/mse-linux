@@ -443,9 +443,6 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 		return -ENODEV;
 	}
 
-	/* cache the contents of the CCR register for EEPROM, etc. */
-	mse->rc_ccr = mse102x_rdreg16(mse, KS_CCR);
-
 	mse102x_init_mac(mse, dev->of_node);
 
 	ret = register_netdev(netdev);
@@ -453,10 +450,6 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 		dev_err(dev, "failed to register network device\n");
 		return ret;
 	}
-
-	netdev_info(netdev, "revision %d, MAC %pM, IRQ %d, %s EEPROM\n",
-		    CIDER_REV_GET(cider), netdev->dev_addr, netdev->irq,
-		    mse->rc_ccr & CCR_EEPROM ? "has" : "no");
 
 	return 0;
 }
