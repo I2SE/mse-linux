@@ -14,10 +14,7 @@
 #include <linux/ethtool.h>
 #include <linux/cache.h>
 #include <linux/crc32.h>
-#include <linux/regulator/consumer.h>
 
-#include <linux/gpio.h>
-#include <linux/of_gpio.h>
 #include <linux/of_net.h>
 
 #include "mse102x.h"
@@ -590,54 +587,10 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 {
 	struct mse102x_net *mse = netdev_priv(netdev);
 	unsigned cider;
-	int gpio;
 	int ret;
 
 	mse->netdev = netdev;
 	mse->tx_space = 6144;
-
-	gpio = of_get_named_gpio_flags(dev->of_node, "reset-gpios", 0, NULL);
-	if (gpio == -EPROBE_DEFER)
-		return gpio;
-
-	mse->gpio = gpio;
-	if (gpio_is_valid(gpio)) {
-		ret = devm_gpio_request_one(dev, gpio,
-					    GPIOF_OUT_INIT_LOW, "mse102x_rst_n");
-		if (ret) {
-			dev_err(dev, "reset gpio request failed\n");
-			return ret;
-		}
-	}
-
-	mse->vdd_io = devm_regulator_get(dev, "vdd-io");
-	if (IS_ERR(mse->vdd_io)) {
-		ret = PTR_ERR(mse->vdd_io);
-		goto err_reg_io;
-	}
-
-	ret = regulator_enable(mse->vdd_io);
-	if (ret) {
-		dev_err(dev, "regulator vdd_io enable fail: %d\n", ret);
-		goto err_reg_io;
-	}
-
-	mse->vdd_reg = devm_regulator_get(dev, "vdd");
-	if (IS_ERR(mse->vdd_reg)) {
-		ret = PTR_ERR(mse->vdd_reg);
-		goto err_reg;
-	}
-
-	ret = regulator_enable(mse->vdd_reg);
-	if (ret) {
-		dev_err(dev, "regulator vdd enable fail: %d\n", ret);
-		goto err_reg;
-	}
-
-	if (gpio_is_valid(gpio)) {
-		usleep_range(10000, 11000);
-		gpio_set_value(gpio, 1);
-	}
 
 	spin_lock_init(&mse->statelock);
 
@@ -668,8 +621,7 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 	cider = mse102x_rdreg16(mse, KS_CIDER);
 	if ((cider & ~CIDER_REV_MASK) != CIDER_ID) {
 		dev_err(dev, "failed to read device ID\n");
-		ret = -ENODEV;
-		goto err_id;
+		return -ENODEV;
 	}
 
 	/* cache the contents of the CCR register for EEPROM, etc. */
@@ -681,7 +633,7 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 	ret = register_netdev(netdev);
 	if (ret) {
 		dev_err(dev, "failed to register network device\n");
-		goto err_netdev;
+		return ret;
 	}
 
 	netdev_info(netdev, "revision %d, MAC %pM, IRQ %d, %s EEPROM\n",
@@ -689,16 +641,6 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 		    mse->rc_ccr & CCR_EEPROM ? "has" : "no");
 
 	return 0;
-
-err_netdev:
-err_id:
-	if (gpio_is_valid(gpio))
-		gpio_set_value(gpio, 0);
-	regulator_disable(mse->vdd_reg);
-err_reg:
-	regulator_disable(mse->vdd_io);
-err_reg_io:
-	return ret;
 }
 
 int mse102x_remove_common(struct device *dev)
@@ -709,10 +651,6 @@ int mse102x_remove_common(struct device *dev)
 		dev_info(dev, "remove\n");
 
 	unregister_netdev(priv->netdev);
-	if (gpio_is_valid(priv->gpio))
-		gpio_set_value(priv->gpio, 0);
-	regulator_disable(priv->vdd_reg);
-	regulator_disable(priv->vdd_io);
 
 	return 0;
 }

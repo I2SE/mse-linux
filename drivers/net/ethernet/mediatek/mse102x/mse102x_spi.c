@@ -14,11 +14,8 @@
 #include <linux/ethtool.h>
 #include <linux/cache.h>
 #include <linux/crc32.h>
-#include <linux/regulator/consumer.h>
 
 #include <linux/spi/spi.h>
-#include <linux/gpio.h>
-#include <linux/of_gpio.h>
 #include <linux/of_net.h>
 
 #include "mse102x.h"

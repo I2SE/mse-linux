@@ -332,10 +332,6 @@ struct mse102x_net {
 
 	struct sk_buff_head	txq;
 
-	struct regulator	*vdd_reg;
-	struct regulator	*vdd_io;
-	int			gpio;
-
 	void			(*lock)(struct mse102x_net *mse,
 					unsigned long *flags);
 	void			(*unlock)(struct mse102x_net *mse,
