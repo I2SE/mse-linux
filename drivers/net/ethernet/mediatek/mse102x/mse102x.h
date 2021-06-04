@@ -322,7 +322,6 @@ struct mse102x_net {
 	u16			tx_space;
 	u8			fid;
 
-	u16			rc_ier;
 	u16			rc_rxqcr;
 	u16			rc_ccr;
 

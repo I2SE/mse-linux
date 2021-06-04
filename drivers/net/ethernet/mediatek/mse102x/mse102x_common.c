@@ -144,83 +144,13 @@ static void mse102x_rx_pkts(struct mse102x_net *mse)
 static irqreturn_t mse102x_irq(int irq, void *_mse)
 {
 	struct mse102x_net *mse = _mse;
-	unsigned handled = 0;
 	unsigned long flags;
-	unsigned int status;
 
 	mse102x_lock(mse, &flags);
 
-	status = mse102x_rdreg16(mse, KS_ISR);
-
-	netif_dbg(mse, intr, mse->netdev,
-		  "%s: status 0x%04x\n", __func__, status);
-
-	if (status & IRQ_LCI)
-		handled |= IRQ_LCI;
-
-	if (status & IRQ_LDI) {
-		u16 pmecr = mse102x_rdreg16(mse, KS_PMECR);
-		pmecr &= ~PMECR_WKEVT_MASK;
-		mse102x_wrreg16(mse, KS_PMECR, pmecr | PMECR_WKEVT_LINK);
-
-		handled |= IRQ_LDI;
-	}
-
-	if (status & IRQ_RXPSI)
-		handled |= IRQ_RXPSI;
-
-	if (status & IRQ_TXI) {
-		handled |= IRQ_TXI;
-
-		/* no lock here, tx queue should have been stopped */
-
-		/* update our idea of how much tx space is available to the
-		 * system */
-		mse->tx_space = mse102x_rdreg16(mse, KS_TXMIR);
-
-		netif_dbg(mse, intr, mse->netdev,
-			  "%s: txspace %d\n", __func__, mse->tx_space);
-	}
-
-	if (status & IRQ_RXI)
-		handled |= IRQ_RXI;
-
-	if (status & IRQ_SPIBEI) {
-		netdev_err(mse->netdev, "%s: spi bus error\n", __func__);
-		handled |= IRQ_SPIBEI;
-	}
-
-	mse102x_wrreg16(mse, KS_ISR, handled);
-
-	if (status & IRQ_RXI) {
-		/* the datasheet says to disable the rx interrupt during
-		 * packet read-out, however we're masking the interrupt
-		 * from the device so do not bother masking just the RX
-		 * from the device. */
-
-		mse102x_rx_pkts(mse);
-	}
-
-	/* if something stopped the rx process, probably due to wanting
-	 * to change the rx settings, then do something about restarting
-	 * it. */
-	if (status & IRQ_RXPSI) {
-		struct mse102x_rxctrl *rxc = &mse->rxctrl;
-
-		/* update the multicast hash table */
-		mse102x_wrreg16(mse, KS_MAHTR0, rxc->mchash[0]);
-		mse102x_wrreg16(mse, KS_MAHTR1, rxc->mchash[1]);
-		mse102x_wrreg16(mse, KS_MAHTR2, rxc->mchash[2]);
-		mse102x_wrreg16(mse, KS_MAHTR3, rxc->mchash[3]);
-
-		mse102x_wrreg16(mse, KS_RXCR2, rxc->rxcr2);
-		mse102x_wrreg16(mse, KS_RXCR1, rxc->rxcr1);
-	}
+	mse102x_rx_pkts(mse);
 
 	mse102x_unlock(mse, &flags);
-
-	if (status & IRQ_TXI)
-		netif_wake_queue(mse->netdev);
 
 	return IRQ_HANDLED;
 }
@@ -283,9 +213,6 @@ static int mse102x_net_open(struct net_device *dev)
 
 	mse102x_wrreg16(mse, KS_RXQCR, mse->rc_rxqcr);
 
-	/* clear then enable interrupts */
-	mse102x_wrreg16(mse, KS_ISR, mse->rc_ier);
-	mse102x_wrreg16(mse, KS_IER, mse->rc_ier);
 
 	netif_start_queue(mse->netdev);
 
@@ -304,12 +231,6 @@ static int mse102x_net_stop(struct net_device *dev)
 	netif_info(mse, ifdown, dev, "shutting down\n");
 
 	netif_stop_queue(dev);
-
-	mse102x_lock(mse, &flags);
-	/* turn off the IRQs and ack any outstanding */
-	mse102x_wrreg16(mse, KS_IER, 0x0000);
-	mse102x_wrreg16(mse, KS_ISR, 0xffff);
-	mse102x_unlock(mse, &flags);
 
 	/* stop any outstanding work */
 	mse102x_flush_tx_work(mse);

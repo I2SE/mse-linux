@@ -308,14 +308,6 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	mse->rx_skb = mse102x_rx_skb_spi;
 	mse->flush_tx_work = mse102x_flush_tx_work_spi;
 
-#define STD_IRQ (IRQ_LCI |	/* Link Change */	\
-		 IRQ_TXI |	/* TX done */		\
-		 IRQ_RXI |	/* RX done */		\
-		 IRQ_SPIBEI |	/* SPI bus error */	\
-		 IRQ_TXPSI |	/* TX process stop */	\
-		 IRQ_RXPSI)	/* RX process stop */
-	mse->rc_ier = STD_IRQ;
-
 	mses = to_mse102x_spi(mse);
 
 	mses->spidev = spi;
