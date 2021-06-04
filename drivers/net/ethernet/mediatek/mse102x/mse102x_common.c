@@ -41,55 +41,6 @@ static unsigned int mse102x_rdreg16(struct mse102x_net *mse,
 	return mse->rdreg16(mse, reg);
 }
 
-static void mse102x_soft_reset(struct mse102x_net *mse, unsigned op)
-{
-	mse102x_wrreg16(mse, KS_GRR, op);
-	mdelay(1);	/* wait a short time to effect reset */
-	mse102x_wrreg16(mse, KS_GRR, 0);
-	mdelay(1);	/* wait for condition to clear */
-}
-
-static void mse102x_set_powermode(struct mse102x_net *mse, unsigned pwrmode)
-{
-	unsigned pmecr;
-
-	netif_dbg(mse, hw, mse->netdev, "setting power mode %d\n", pwrmode);
-
-	pmecr = mse102x_rdreg16(mse, KS_PMECR);
-	pmecr &= ~PMECR_PM_MASK;
-	pmecr |= pwrmode;
-
-	mse102x_wrreg16(mse, KS_PMECR, pmecr);
-}
-
-static int mse102x_write_mac_addr(struct net_device *dev)
-{
-	struct mse102x_net *mse = netdev_priv(dev);
-	unsigned long flags;
-	u16 val;
-	int i;
-
-	mse102x_lock(mse, &flags);
-
-	/*
-	 * Wake up chip in case it was powered off when stopped; otherwise,
-	 * the first write to the MAC address does not take effect.
-	 */
-	mse102x_set_powermode(mse, PMECR_PM_NORMAL);
-
-	for (i = 0; i < ETH_ALEN; i += 2) {
-		val = (dev->dev_addr[i] << 8) | dev->dev_addr[i + 1];
-		mse102x_wrreg16(mse, KS_MAR(i), val);
-	}
-
-	if (!netif_running(dev))
-		mse102x_set_powermode(mse, PMECR_PM_SOFTDOWN);
-
-	mse102x_unlock(mse, &flags);
-
-	return 0;
-}
-
 static void mse102x_init_mac(struct mse102x_net *mse, struct device_node *np)
 {
 	struct net_device *dev = mse->netdev;
@@ -98,12 +49,10 @@ static void mse102x_init_mac(struct mse102x_net *mse, struct device_node *np)
 	mac_addr = of_get_mac_address(np);
 	if (!IS_ERR(mac_addr)) {
 		ether_addr_copy(dev->dev_addr, mac_addr);
-		mse102x_write_mac_addr(dev);
 		return;
 	}
 
 	eth_hw_addr_random(dev);
-	mse102x_write_mac_addr(dev);
 }
 
 static void mse102x_dbg_dumpkkt(struct mse102x_net *mse, u8 *rxpkt)
@@ -302,13 +251,6 @@ static int mse102x_net_open(struct net_device *dev)
 
 	netif_dbg(mse, ifup, mse->netdev, "opening\n");
 
-	/* bring chip out of any power saving mode it was in */
-	mse102x_set_powermode(mse, PMECR_PM_NORMAL);
-
-	/* issue a soft reset to the RX/TX QMU to put it into a known
-	 * state. */
-	mse102x_soft_reset(mse, GRR_QMU);
-
 	/* setup transmission parameters */
 
 	mse102x_wrreg16(mse, KS_TXCR, (TXCR_TXE | /* enable transmit process */
@@ -380,8 +322,6 @@ static int mse102x_net_stop(struct net_device *dev)
 	/* shutdown TX process */
 	mse102x_wrreg16(mse, KS_TXCR, 0x0000);
 
-	/* set powermode to soft power down to save power */
-	mse102x_set_powermode(mse, PMECR_PM_SOFTDOWN);
 	mse102x_unlock(mse, &flags);
 
 	/* ensure any queued tx buffers are dumped */
@@ -474,25 +414,11 @@ static void mse102x_set_rx_mode(struct net_device *dev)
 	spin_unlock(&mse->statelock);
 }
 
-static int mse102x_set_mac_address(struct net_device *dev, void *addr)
-{
-	struct sockaddr *sa = addr;
-
-	if (netif_running(dev))
-		return -EBUSY;
-
-	if (!is_valid_ether_addr(sa->sa_data))
-		return -EADDRNOTAVAIL;
-
-	memcpy(dev->dev_addr, sa->sa_data, ETH_ALEN);
-	return mse102x_write_mac_addr(dev);
-}
-
 static const struct net_device_ops mse102x_netdev_ops = {
 	.ndo_open		= mse102x_net_open,
 	.ndo_stop		= mse102x_net_stop,
 	.ndo_start_xmit		= mse102x_start_xmit,
-	.ndo_set_mac_address	= mse102x_set_mac_address,
+	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_set_rx_mode	= mse102x_set_rx_mode,
 	.ndo_validate_addr	= eth_validate_addr,
 };
@@ -521,35 +447,10 @@ static void mse102x_set_msglevel(struct net_device *dev, u32 to)
 
 static const struct ethtool_ops mse102x_ethtool_ops = {
 	.get_drvinfo	= mse102x_get_drvinfo,
+	.get_link	= ethtool_op_get_link,
 	.get_msglevel	= mse102x_get_msglevel,
 	.set_msglevel	= mse102x_set_msglevel,
 };
-
-static int mse102x_read_selftest(struct mse102x_net *mse)
-{
-	unsigned both_done = MBIR_TXMBF | MBIR_RXMBF;
-	int ret = 0;
-	unsigned rd;
-
-	rd = mse102x_rdreg16(mse, KS_MBIR);
-
-	if ((rd & both_done) != both_done) {
-		netdev_warn(mse->netdev, "Memory selftest not finished\n");
-		return 0;
-	}
-
-	if (rd & MBIR_TXMBFA) {
-		netdev_err(mse->netdev, "TX memory selftest fail\n");
-		ret |= 1;
-	}
-
-	if (rd & MBIR_RXMBFA) {
-		netdev_err(mse->netdev, "RX memory selftest fail\n");
-		ret |= 2;
-	}
-
-	return 0;
-}
 
 /* driver bus management functions */
 
@@ -614,9 +515,6 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 	netdev->if_port = IF_PORT_100BASET;
 	netdev->netdev_ops = &mse102x_netdev_ops;
 
-	/* issue a global soft reset to reset the device. */
-	mse102x_soft_reset(mse, GRR_GSR);
-
 	/* simple check for a valid chip being connected to the bus */
 	cider = mse102x_rdreg16(mse, KS_CIDER);
 	if ((cider & ~CIDER_REV_MASK) != CIDER_ID) {
@@ -627,7 +525,6 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 	/* cache the contents of the CCR register for EEPROM, etc. */
 	mse->rc_ccr = mse102x_rdreg16(mse, KS_CCR);
 
-	mse102x_read_selftest(mse);
 	mse102x_init_mac(mse, dev->of_node);
 
 	ret = register_netdev(netdev);
