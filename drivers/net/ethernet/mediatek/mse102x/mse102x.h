@@ -18,7 +18,6 @@ union mse102x_tx_hdr {
 
 struct mse102x_net {
 	struct net_device	*netdev;
-	spinlock_t		statelock;
 
 	union mse102x_tx_hdr	txh ____cacheline_aligned;
 	u8			rxd[8];

@@ -266,8 +266,6 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 	mse->netdev = netdev;
 	mse->tx_space = 6144;
 
-	spin_lock_init(&mse->statelock);
-
 	dev_info(dev, "message enable is %d\n", msg_en);
 
 	/* set the default message enable */

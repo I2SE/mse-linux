@@ -259,8 +259,6 @@ static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 	netif_dbg(mse, tx_queued, mse->netdev,
 		  "%s: skb %p, %d@%p\n", __func__, skb, skb->len, skb->data);
 
-	spin_lock(&mse->statelock);
-
 	if (needed > mse->tx_space) {
 		netif_stop_queue(dev);
 		ret = NETDEV_TX_BUSY;
@@ -269,7 +267,6 @@ static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 		skb_queue_tail(&mse->txq, skb);
 	}
 
-	spin_unlock(&mse->statelock);
 	schedule_work(&mses->tx_work);
 
 	return ret;
