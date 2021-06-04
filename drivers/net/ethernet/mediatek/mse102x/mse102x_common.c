@@ -14,7 +14,6 @@
 #include <linux/ethtool.h>
 #include <linux/cache.h>
 #include <linux/crc32.h>
-#include <linux/mii.h>
 #include <linux/regulator/consumer.h>
 
 #include <linux/gpio.h>
@@ -274,9 +273,6 @@ static irqreturn_t mse102x_irq(int irq, void *_ks)
 
 	mse102x_unlock(ks, &flags);
 
-	if (status & IRQ_LCI)
-		mii_check_link(&ks->mii);
-
 	if (status & IRQ_TXI)
 		netif_wake_queue(ks->netdev);
 
@@ -357,7 +353,7 @@ static int mse102x_net_open(struct net_device *dev)
 	netif_dbg(ks, ifup, ks->netdev, "network device up\n");
 
 	mse102x_unlock(ks, &flags);
-	mii_check_link(&ks->mii);
+
 	return 0;
 }
 
@@ -495,20 +491,9 @@ static int mse102x_set_mac_address(struct net_device *dev, void *addr)
 	return mse102x_write_mac_addr(dev);
 }
 
-static int mse102x_net_ioctl(struct net_device *dev, struct ifreq *req, int cmd)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-
-	if (!netif_running(dev))
-		return -EINVAL;
-
-	return generic_mii_ioctl(&ks->mii, if_mii(req), cmd, NULL);
-}
-
 static const struct net_device_ops mse102x_netdev_ops = {
 	.ndo_open		= mse102x_net_open,
 	.ndo_stop		= mse102x_net_stop,
-	.ndo_do_ioctl		= mse102x_net_ioctl,
 	.ndo_start_xmit		= mse102x_start_xmit,
 	.ndo_set_mac_address	= mse102x_set_mac_address,
 	.ndo_set_rx_mode	= mse102x_set_rx_mode,
@@ -537,99 +522,11 @@ static void mse102x_set_msglevel(struct net_device *dev, u32 to)
 	ks->msg_enable = to;
 }
 
-static int mse102x_get_link_ksettings(struct net_device *dev,
-				     struct ethtool_link_ksettings *cmd)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-
-	mii_ethtool_get_link_ksettings(&ks->mii, cmd);
-
-	return 0;
-}
-
-static int mse102x_set_link_ksettings(struct net_device *dev,
-				     const struct ethtool_link_ksettings *cmd)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-	return mii_ethtool_set_link_ksettings(&ks->mii, cmd);
-}
-
-static u32 mse102x_get_link(struct net_device *dev)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-	return mii_link_ok(&ks->mii);
-}
-
-static int mse102x_nway_reset(struct net_device *dev)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-	return mii_nway_restart(&ks->mii);
-}
-
 static const struct ethtool_ops mse102x_ethtool_ops = {
 	.get_drvinfo	= mse102x_get_drvinfo,
 	.get_msglevel	= mse102x_get_msglevel,
 	.set_msglevel	= mse102x_set_msglevel,
-	.get_link	= mse102x_get_link,
-	.nway_reset	= mse102x_nway_reset,
-	.get_link_ksettings = mse102x_get_link_ksettings,
-	.set_link_ksettings = mse102x_set_link_ksettings,
 };
-
-/* MII interface controls */
-
-static int mse102x_phy_reg(int reg)
-{
-	switch (reg) {
-	case MII_BMCR:
-		return KS_P1MBCR;
-	case MII_BMSR:
-		return KS_P1MBSR;
-	case MII_PHYSID1:
-		return KS_PHY1ILR;
-	case MII_PHYSID2:
-		return KS_PHY1IHR;
-	case MII_ADVERTISE:
-		return KS_P1ANAR;
-	case MII_LPA:
-		return KS_P1ANLPR;
-	}
-
-	return 0x0;
-}
-
-static int mse102x_phy_read(struct net_device *dev, int phy_addr, int reg)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-	unsigned long flags;
-	int ksreg;
-	int result;
-
-	ksreg = mse102x_phy_reg(reg);
-	if (!ksreg)
-		return 0x0;	/* no error return allowed, so use zero */
-
-	mse102x_lock(ks, &flags);
-	result = mse102x_rdreg16(ks, ksreg);
-	mse102x_unlock(ks, &flags);
-
-	return result;
-}
-
-static void mse102x_phy_write(struct net_device *dev,
-			     int phy, int reg, int value)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-	unsigned long flags;
-	int ksreg;
-
-	ksreg = mse102x_phy_reg(reg);
-	if (ksreg) {
-		mse102x_lock(ks, &flags);
-		mse102x_wrreg16(ks, ksreg, value);
-		mse102x_unlock(ks, &flags);
-	}
-}
 
 static int mse102x_read_selftest(struct mse102x_net *ks)
 {
@@ -745,14 +642,6 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 	spin_lock_init(&ks->statelock);
 
 	INIT_WORK(&ks->rxctrl_work, mse102x_rxctrl_work);
-
-	/* setup mii state */
-	ks->mii.dev		= netdev;
-	ks->mii.phy_id		= 1,
-	ks->mii.phy_id_mask	= 1;
-	ks->mii.reg_num_mask	= 0xf;
-	ks->mii.mdio_read	= mse102x_phy_read;
-	ks->mii.mdio_write	= mse102x_phy_write;
 
 	dev_info(dev, "message enable is %d\n", msg_en);
 

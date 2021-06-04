@@ -14,7 +14,6 @@
 #include <linux/ethtool.h>
 #include <linux/cache.h>
 #include <linux/crc32.h>
-#include <linux/mii.h>
 #include <linux/regulator/consumer.h>
 
 #include <linux/spi/spi.h>

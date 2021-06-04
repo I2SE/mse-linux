@@ -326,7 +326,6 @@ struct mse102x_net {
 	u16			rc_rxqcr;
 	u16			rc_ccr;
 
-	struct mii_if_info	mii;
 	struct mse102x_rxctrl	rxctrl;
 
 	struct work_struct	rxctrl_work;
