@@ -94,24 +94,6 @@ static int mse102x_write_mac_addr(struct net_device *dev)
 	return 0;
 }
 
-static void mse102x_read_mac_addr(struct net_device *dev)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-	unsigned long flags;
-	u16 reg;
-	int i;
-
-	mse102x_lock(ks, &flags);
-
-	for (i = 0; i < ETH_ALEN; i += 2) {
-		reg = mse102x_rdreg16(ks, KS_MAR(i));
-		dev->dev_addr[i] = reg >> 8;
-		dev->dev_addr[i + 1] = reg & 0xff;
-	}
-
-	mse102x_unlock(ks, &flags);
-}
-
 static void mse102x_init_mac(struct mse102x_net *ks, struct device_node *np)
 {
 	struct net_device *dev = ks->netdev;
@@ -122,15 +104,6 @@ static void mse102x_init_mac(struct mse102x_net *ks, struct device_node *np)
 		ether_addr_copy(dev->dev_addr, mac_addr);
 		mse102x_write_mac_addr(dev);
 		return;
-	}
-
-	if (ks->rc_ccr & CCR_EEPROM) {
-		mse102x_read_mac_addr(dev);
-		if (is_valid_ether_addr(dev->dev_addr))
-			return;
-
-		netdev_err(ks->netdev, "invalid mac address read %pM\n",
-				dev->dev_addr);
 	}
 
 	eth_hw_addr_random(dev);
@@ -593,145 +566,12 @@ static int mse102x_nway_reset(struct net_device *dev)
 	return mii_nway_restart(&ks->mii);
 }
 
-/* EEPROM support */
-
-static void mse102x_eeprom_regread(struct eeprom_93cx6 *ee)
-{
-	struct mse102x_net *ks = ee->data;
-	unsigned val;
-
-	val = mse102x_rdreg16(ks, KS_EEPCR);
-
-	ee->reg_data_out = (val & EEPCR_EESB) ? 1 : 0;
-	ee->reg_data_clock = (val & EEPCR_EESCK) ? 1 : 0;
-	ee->reg_chip_select = (val & EEPCR_EECS) ? 1 : 0;
-}
-
-static void mse102x_eeprom_regwrite(struct eeprom_93cx6 *ee)
-{
-	struct mse102x_net *ks = ee->data;
-	unsigned val = EEPCR_EESA;	/* default - eeprom access on */
-
-	if (ee->drive_data)
-		val |= EEPCR_EESRWA;
-	if (ee->reg_data_in)
-		val |= EEPCR_EEDO;
-	if (ee->reg_data_clock)
-		val |= EEPCR_EESCK;
-	if (ee->reg_chip_select)
-		val |= EEPCR_EECS;
-
-	mse102x_wrreg16(ks, KS_EEPCR, val);
-}
-
-static int mse102x_eeprom_claim(struct mse102x_net *ks)
-{
-	/* start with clock low, cs high */
-	mse102x_wrreg16(ks, KS_EEPCR, EEPCR_EESA | EEPCR_EECS);
-	return 0;
-}
-
-static void mse102x_eeprom_release(struct mse102x_net *ks)
-{
-	unsigned val = mse102x_rdreg16(ks, KS_EEPCR);
-
-	mse102x_wrreg16(ks, KS_EEPCR, val & ~EEPCR_EESA);
-}
-
-#define KS_EEPROM_MAGIC (0x00008851)
-
-static int mse102x_set_eeprom(struct net_device *dev,
-			     struct ethtool_eeprom *ee, u8 *data)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-	int offset = ee->offset;
-	unsigned long flags;
-	int len = ee->len;
-	u16 tmp;
-
-	/* currently only support byte writing */
-	if (len != 1)
-		return -EINVAL;
-
-	if (ee->magic != KS_EEPROM_MAGIC)
-		return -EINVAL;
-
-	if (!(ks->rc_ccr & CCR_EEPROM))
-		return -ENOENT;
-
-	mse102x_lock(ks, &flags);
-
-	mse102x_eeprom_claim(ks);
-
-	eeprom_93cx6_wren(&ks->eeprom, true);
-
-	/* ethtool currently only supports writing bytes, which means
-	 * we have to read/modify/write our 16bit EEPROMs */
-
-	eeprom_93cx6_read(&ks->eeprom, offset/2, &tmp);
-
-	if (offset & 1) {
-		tmp &= 0xff;
-		tmp |= *data << 8;
-	} else {
-		tmp &= 0xff00;
-		tmp |= *data;
-	}
-
-	eeprom_93cx6_write(&ks->eeprom, offset/2, tmp);
-	eeprom_93cx6_wren(&ks->eeprom, false);
-
-	mse102x_eeprom_release(ks);
-	mse102x_unlock(ks, &flags);
-
-	return 0;
-}
-
-static int mse102x_get_eeprom(struct net_device *dev,
-			     struct ethtool_eeprom *ee, u8 *data)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-	int offset = ee->offset;
-	unsigned long flags;
-	int len = ee->len;
-
-	/* must be 2 byte aligned */
-	if (len & 1 || offset & 1)
-		return -EINVAL;
-
-	if (!(ks->rc_ccr & CCR_EEPROM))
-		return -ENOENT;
-
-	mse102x_lock(ks, &flags);
-
-	mse102x_eeprom_claim(ks);
-
-	ee->magic = KS_EEPROM_MAGIC;
-
-	eeprom_93cx6_multiread(&ks->eeprom, offset/2, (__le16 *)data, len/2);
-	mse102x_eeprom_release(ks);
-	mse102x_unlock(ks, &flags);
-
-	return 0;
-}
-
-static int mse102x_get_eeprom_len(struct net_device *dev)
-{
-	struct mse102x_net *ks = netdev_priv(dev);
-
-	/* currently, we assume it is an 93C46 attached, so return 128 */
-	return ks->rc_ccr & CCR_EEPROM ? 128 : 0;
-}
-
 static const struct ethtool_ops mse102x_ethtool_ops = {
 	.get_drvinfo	= mse102x_get_drvinfo,
 	.get_msglevel	= mse102x_get_msglevel,
 	.set_msglevel	= mse102x_set_msglevel,
 	.get_link	= mse102x_get_link,
 	.nway_reset	= mse102x_nway_reset,
-	.get_eeprom_len	= mse102x_get_eeprom_len,
-	.get_eeprom	= mse102x_get_eeprom,
-	.set_eeprom	= mse102x_set_eeprom,
 	.get_link_ksettings = mse102x_get_link_ksettings,
 	.set_link_ksettings = mse102x_set_link_ksettings,
 };
@@ -905,12 +745,6 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 	spin_lock_init(&ks->statelock);
 
 	INIT_WORK(&ks->rxctrl_work, mse102x_rxctrl_work);
-
-	/* setup EEPROM state */
-	ks->eeprom.data = ks;
-	ks->eeprom.width = PCI_EEPROM_WIDTH_93C46;
-	ks->eeprom.register_read = mse102x_eeprom_regread;
-	ks->eeprom.register_write = mse102x_eeprom_regwrite;
 
 	/* setup mii state */
 	ks->mii.dev		= netdev;

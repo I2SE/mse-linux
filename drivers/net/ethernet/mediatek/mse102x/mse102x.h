@@ -5,8 +5,6 @@
 #ifndef __MSE102X_H__
 #define __MSE102X_H__
 
-#include <linux/eeprom_93cx6.h>
-
 #define KS_CCR					0x08
 #define CCR_LE					(1 << 10)
 #define CCR_EEPROM				(1 << 9)
@@ -335,7 +333,6 @@ struct mse102x_net {
 
 	struct sk_buff_head	txq;
 
-	struct eeprom_93cx6	eeprom;
 	struct regulator	*vdd_reg;
 	struct regulator	*vdd_io;
 	int			gpio;
