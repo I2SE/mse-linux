@@ -336,23 +336,23 @@ struct mse102x_net {
 	struct regulator	*vdd_io;
 	int			gpio;
 
-	void			(*lock)(struct mse102x_net *ks,
+	void			(*lock)(struct mse102x_net *mse,
 					unsigned long *flags);
-	void			(*unlock)(struct mse102x_net *ks,
+	void			(*unlock)(struct mse102x_net *mse,
 					  unsigned long *flags);
-	unsigned int		(*rdreg16)(struct mse102x_net *ks,
+	unsigned int		(*rdreg16)(struct mse102x_net *mse,
 					   unsigned int reg);
-	void			(*wrreg16)(struct mse102x_net *ks,
+	void			(*wrreg16)(struct mse102x_net *mse,
 					   unsigned int reg, unsigned int val);
-	void			(*rdfifo)(struct mse102x_net *ks, u8 *buff,
+	void			(*rdfifo)(struct mse102x_net *mse, u8 *buff,
 					  unsigned int len);
-	void			(*wrfifo)(struct mse102x_net *ks,
+	void			(*wrfifo)(struct mse102x_net *mse,
 					  struct sk_buff *txp, bool irq);
 	netdev_tx_t		(*start_xmit)(struct sk_buff *skb,
 					      struct net_device *dev);
-	void			(*rx_skb)(struct mse102x_net *ks,
+	void			(*rx_skb)(struct mse102x_net *mse,
 					  struct sk_buff *skb);
-	void			(*flush_tx_work)(struct mse102x_net *ks);
+	void			(*flush_tx_work)(struct mse102x_net *mse);
 };
 
 int mse102x_probe_common(struct net_device *netdev, struct device *dev,
@@ -364,10 +364,10 @@ int mse102x_resume(struct device *dev);
 static __maybe_unused SIMPLE_DEV_PM_OPS(mse102x_pm_ops,
 					mse102x_suspend, mse102x_resume);
 
-static void __maybe_unused mse102x_done_tx(struct mse102x_net *ks,
+static void __maybe_unused mse102x_done_tx(struct mse102x_net *mse,
 					  struct sk_buff *txb)
 {
-	struct net_device *dev = ks->netdev;
+	struct net_device *dev = mse->netdev;
 
 	dev->stats.tx_bytes += txb->len;
 	dev->stats.tx_packets++;

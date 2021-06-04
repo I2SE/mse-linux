@@ -36,7 +36,7 @@ struct mse102x_net_spi {
 	struct spi_transfer	spi_xfer2[2];
 };
 
-#define to_mse102x_spi(ks) container_of((ks), struct mse102x_net_spi, mse102x)
+#define to_mse102x_spi(mse) container_of((mse), struct mse102x_net_spi, mse102x)
 
 /* SPI frame opcodes */
 #define KS_SPIOP_RD	0x00
@@ -51,18 +51,18 @@ struct mse102x_net_spi {
 #define MK_OP(_byteen, _reg)	\
 	(BYTE_EN(_byteen) | (_reg) << (8 + 2) | (_reg) >> 6)
 
-static void mse102x_lock_spi(struct mse102x_net *ks, unsigned long *flags)
+static void mse102x_lock_spi(struct mse102x_net *mse, unsigned long *flags)
 {
-	struct mse102x_net_spi *kss = to_mse102x_spi(ks);
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
-	mutex_lock(&kss->lock);
+	mutex_lock(&mses->lock);
 }
 
-static void mse102x_unlock_spi(struct mse102x_net *ks, unsigned long *flags)
+static void mse102x_unlock_spi(struct mse102x_net *mse, unsigned long *flags)
 {
-	struct mse102x_net_spi *kss = to_mse102x_spi(ks);
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
-	mutex_unlock(&kss->lock);
+	mutex_unlock(&mses->lock);
 }
 
 /* SPI register read/write calls.
@@ -72,12 +72,12 @@ static void mse102x_unlock_spi(struct mse102x_net *ks, unsigned long *flags)
  * chip is busy transferring packet data (RX/TX FIFO accesses).
  */
 
-static void mse102x_wrreg16_spi(struct mse102x_net *ks, unsigned int reg,
+static void mse102x_wrreg16_spi(struct mse102x_net *mse, unsigned int reg,
 			       unsigned int val)
 {
-	struct mse102x_net_spi *kss = to_mse102x_spi(ks);
-	struct spi_transfer *xfer = &kss->spi_xfer1;
-	struct spi_message *msg = &kss->spi_msg1;
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
+	struct spi_transfer *xfer = &mses->spi_xfer1;
+	struct spi_message *msg = &mses->spi_msg1;
 	__le16 txb[2];
 	int ret;
 
@@ -88,26 +88,26 @@ static void mse102x_wrreg16_spi(struct mse102x_net *ks, unsigned int reg,
 	xfer->rx_buf = NULL;
 	xfer->len = 4;
 
-	ret = spi_sync(kss->spidev, msg);
+	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0)
-		netdev_err(ks->netdev, "spi_sync() failed\n");
+		netdev_err(mse->netdev, "spi_sync() failed\n");
 }
 
-static void mse102x_rdreg(struct mse102x_net *ks, unsigned int op,
+static void mse102x_rdreg(struct mse102x_net *mse, unsigned int op,
 			 u8 *rxb, unsigned int rxl)
 {
-	struct mse102x_net_spi *kss = to_mse102x_spi(ks);
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	struct spi_transfer *xfer;
 	struct spi_message *msg;
-	__le16 *txb = (__le16 *)ks->txd;
-	u8 *trx = ks->rxd;
+	__le16 *txb = (__le16 *)mse->txd;
+	u8 *trx = mse->rxd;
 	int ret;
 
 	txb[0] = cpu_to_le16(op | KS_SPIOP_RD);
 
-	if (kss->spidev->master->flags & SPI_MASTER_HALF_DUPLEX) {
-		msg = &kss->spi_msg2;
-		xfer = kss->spi_xfer2;
+	if (mses->spidev->master->flags & SPI_MASTER_HALF_DUPLEX) {
+		msg = &mses->spi_msg2;
+		xfer = mses->spi_xfer2;
 
 		xfer->tx_buf = txb;
 		xfer->rx_buf = NULL;
@@ -118,40 +118,40 @@ static void mse102x_rdreg(struct mse102x_net *ks, unsigned int op,
 		xfer->rx_buf = trx;
 		xfer->len = rxl;
 	} else {
-		msg = &kss->spi_msg1;
-		xfer = &kss->spi_xfer1;
+		msg = &mses->spi_msg1;
+		xfer = &mses->spi_xfer1;
 
 		xfer->tx_buf = txb;
 		xfer->rx_buf = trx;
 		xfer->len = rxl + 2;
 	}
 
-	ret = spi_sync(kss->spidev, msg);
+	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0)
-		netdev_err(ks->netdev, "read: spi_sync() failed\n");
-	else if (kss->spidev->master->flags & SPI_MASTER_HALF_DUPLEX)
+		netdev_err(mse->netdev, "read: spi_sync() failed\n");
+	else if (mses->spidev->master->flags & SPI_MASTER_HALF_DUPLEX)
 		memcpy(rxb, trx, rxl);
 	else
 		memcpy(rxb, trx + 2, rxl);
 }
 
-static unsigned int mse102x_rdreg16_spi(struct mse102x_net *ks, unsigned int reg)
+static unsigned int mse102x_rdreg16_spi(struct mse102x_net *mse, unsigned int reg)
 {
 	__le16 rx = 0;
 
-	mse102x_rdreg(ks, MK_OP(reg & 2 ? 0xC : 0x3, reg), (u8 *)&rx, 2);
+	mse102x_rdreg(mse, MK_OP(reg & 2 ? 0xC : 0x3, reg), (u8 *)&rx, 2);
 	return le16_to_cpu(rx);
 }
 
-static void mse102x_rdfifo_spi(struct mse102x_net *ks, u8 *buff, unsigned int len)
+static void mse102x_rdfifo_spi(struct mse102x_net *mse, u8 *buff, unsigned int len)
 {
-	struct mse102x_net_spi *kss = to_mse102x_spi(ks);
-	struct spi_transfer *xfer = kss->spi_xfer2;
-	struct spi_message *msg = &kss->spi_msg2;
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
+	struct spi_transfer *xfer = mses->spi_xfer2;
+	struct spi_message *msg = &mses->spi_msg2;
 	u8 txb[1];
 	int ret;
 
-	netif_dbg(ks, rx_status, ks->netdev,
+	netif_dbg(mse, rx_status, mse->netdev,
 		  "%s: %d@%p\n", __func__, len, buff);
 
 	/* set the operation we're issuing */
@@ -166,35 +166,35 @@ static void mse102x_rdfifo_spi(struct mse102x_net *ks, u8 *buff, unsigned int le
 	xfer->tx_buf = NULL;
 	xfer->len = len;
 
-	ret = spi_sync(kss->spidev, msg);
+	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0)
-		netdev_err(ks->netdev, "%s: spi_sync() failed\n", __func__);
+		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
 }
 
-static void mse102x_wrfifo_spi(struct mse102x_net *ks, struct sk_buff *txp,
+static void mse102x_wrfifo_spi(struct mse102x_net *mse, struct sk_buff *txp,
 			      bool irq)
 {
-	struct mse102x_net_spi *kss = to_mse102x_spi(ks);
-	struct spi_transfer *xfer = kss->spi_xfer2;
-	struct spi_message *msg = &kss->spi_msg2;
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
+	struct spi_transfer *xfer = mses->spi_xfer2;
+	struct spi_message *msg = &mses->spi_msg2;
 	unsigned int fid = 0;
 	int ret;
 
-	netif_dbg(ks, tx_queued, ks->netdev, "%s: skb %p, %d@%p, irq %d\n",
+	netif_dbg(mse, tx_queued, mse->netdev, "%s: skb %p, %d@%p, irq %d\n",
 		  __func__, txp, txp->len, txp->data, irq);
 
-	fid = ks->fid++;
+	fid = mse->fid++;
 	fid &= TXFR_TXFID_MASK;
 
 	if (irq)
 		fid |= TXFR_TXIC;	/* irq on completion */
 
 	/* start header at txb[1] to align txw entries */
-	ks->txh.txb[1] = KS_SPIOP_TXFIFO;
-	ks->txh.txw[1] = cpu_to_le16(fid);
-	ks->txh.txw[2] = cpu_to_le16(txp->len);
+	mse->txh.txb[1] = KS_SPIOP_TXFIFO;
+	mse->txh.txw[1] = cpu_to_le16(fid);
+	mse->txh.txw[2] = cpu_to_le16(txp->len);
 
-	xfer->tx_buf = &ks->txh.txb[1];
+	xfer->tx_buf = &mse->txh.txb[1];
 	xfer->rx_buf = NULL;
 	xfer->len = 5;
 
@@ -203,53 +203,53 @@ static void mse102x_wrfifo_spi(struct mse102x_net *ks, struct sk_buff *txp,
 	xfer->rx_buf = NULL;
 	xfer->len = ALIGN(txp->len, 4);
 
-	ret = spi_sync(kss->spidev, msg);
+	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0)
-		netdev_err(ks->netdev, "%s: spi_sync() failed\n", __func__);
+		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
 }
 
-static void mse102x_rx_skb_spi(struct mse102x_net *ks, struct sk_buff *skb)
+static void mse102x_rx_skb_spi(struct mse102x_net *mse, struct sk_buff *skb)
 {
 	netif_rx_ni(skb);
 }
 
 static void mse102x_tx_work(struct work_struct *work)
 {
-	struct mse102x_net_spi *kss;
-	struct mse102x_net *ks;
+	struct mse102x_net_spi *mses;
+	struct mse102x_net *mse;
 	unsigned long flags;
 	struct sk_buff *txb;
 	bool last;
 
-	kss = container_of(work, struct mse102x_net_spi, tx_work);
-	ks = &kss->mse102x;
-	last = skb_queue_empty(&ks->txq);
+	mses = container_of(work, struct mse102x_net_spi, tx_work);
+	mse = &mses->mse102x;
+	last = skb_queue_empty(&mse->txq);
 
-	mse102x_lock_spi(ks, &flags);
+	mse102x_lock_spi(mse, &flags);
 
 	while (!last) {
-		txb = skb_dequeue(&ks->txq);
-		last = skb_queue_empty(&ks->txq);
+		txb = skb_dequeue(&mse->txq);
+		last = skb_queue_empty(&mse->txq);
 
 		if (txb) {
-			mse102x_wrreg16_spi(ks, KS_RXQCR,
-					   ks->rc_rxqcr | RXQCR_SDA);
-			mse102x_wrfifo_spi(ks, txb, last);
-			mse102x_wrreg16_spi(ks, KS_RXQCR, ks->rc_rxqcr);
-			mse102x_wrreg16_spi(ks, KS_TXQCR, TXQCR_METFE);
+			mse102x_wrreg16_spi(mse, KS_RXQCR,
+					   mse->rc_rxqcr | RXQCR_SDA);
+			mse102x_wrfifo_spi(mse, txb, last);
+			mse102x_wrreg16_spi(mse, KS_RXQCR, mse->rc_rxqcr);
+			mse102x_wrreg16_spi(mse, KS_TXQCR, TXQCR_METFE);
 
-			mse102x_done_tx(ks, txb);
+			mse102x_done_tx(mse, txb);
 		}
 	}
 
-	mse102x_unlock_spi(ks, &flags);
+	mse102x_unlock_spi(mse, &flags);
 }
 
-static void mse102x_flush_tx_work_spi(struct mse102x_net *ks)
+static void mse102x_flush_tx_work_spi(struct mse102x_net *mse)
 {
-	struct mse102x_net_spi *kss = to_mse102x_spi(ks);
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
-	flush_work(&kss->tx_work);
+	flush_work(&mses->tx_work);
 }
 
 static unsigned int calc_txlen(unsigned int len)
@@ -261,27 +261,27 @@ static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 					 struct net_device *dev)
 {
 	unsigned int needed = calc_txlen(skb->len);
-	struct mse102x_net *ks = netdev_priv(dev);
+	struct mse102x_net *mse = netdev_priv(dev);
 	netdev_tx_t ret = NETDEV_TX_OK;
-	struct mse102x_net_spi *kss;
+	struct mse102x_net_spi *mses;
 
-	kss = to_mse102x_spi(ks);
+	mses = to_mse102x_spi(mse);
 
-	netif_dbg(ks, tx_queued, ks->netdev,
+	netif_dbg(mse, tx_queued, mse->netdev,
 		  "%s: skb %p, %d@%p\n", __func__, skb, skb->len, skb->data);
 
-	spin_lock(&ks->statelock);
+	spin_lock(&mse->statelock);
 
-	if (needed > ks->tx_space) {
+	if (needed > mse->tx_space) {
 		netif_stop_queue(dev);
 		ret = NETDEV_TX_BUSY;
 	} else {
-		ks->tx_space -= needed;
-		skb_queue_tail(&ks->txq, skb);
+		mse->tx_space -= needed;
+		skb_queue_tail(&mse->txq, skb);
 	}
 
-	spin_unlock(&ks->statelock);
-	schedule_work(&kss->tx_work);
+	spin_unlock(&mse->statelock);
+	schedule_work(&mses->tx_work);
 
 	return ret;
 }
@@ -289,9 +289,9 @@ static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 static int mse102x_probe_spi(struct spi_device *spi)
 {
 	struct device *dev = &spi->dev;
-	struct mse102x_net_spi *kss;
+	struct mse102x_net_spi *mses;
 	struct net_device *netdev;
-	struct mse102x_net *ks;
+	struct mse102x_net *mse;
 
 	netdev = devm_alloc_etherdev(dev, sizeof(struct mse102x_net_spi));
 	if (!netdev)
@@ -299,17 +299,17 @@ static int mse102x_probe_spi(struct spi_device *spi)
 
 	spi->bits_per_word = 8;
 
-	ks = netdev_priv(netdev);
+	mse = netdev_priv(netdev);
 
-	ks->lock = mse102x_lock_spi;
-	ks->unlock = mse102x_unlock_spi;
-	ks->rdreg16 = mse102x_rdreg16_spi;
-	ks->wrreg16 = mse102x_wrreg16_spi;
-	ks->rdfifo = mse102x_rdfifo_spi;
-	ks->wrfifo = mse102x_wrfifo_spi;
-	ks->start_xmit = mse102x_start_xmit_spi;
-	ks->rx_skb = mse102x_rx_skb_spi;
-	ks->flush_tx_work = mse102x_flush_tx_work_spi;
+	mse->lock = mse102x_lock_spi;
+	mse->unlock = mse102x_unlock_spi;
+	mse->rdreg16 = mse102x_rdreg16_spi;
+	mse->wrreg16 = mse102x_wrreg16_spi;
+	mse->rdfifo = mse102x_rdfifo_spi;
+	mse->wrfifo = mse102x_wrfifo_spi;
+	mse->start_xmit = mse102x_start_xmit_spi;
+	mse->rx_skb = mse102x_rx_skb_spi;
+	mse->flush_tx_work = mse102x_flush_tx_work_spi;
 
 #define STD_IRQ (IRQ_LCI |	/* Link Change */	\
 		 IRQ_TXI |	/* TX done */		\
@@ -317,21 +317,21 @@ static int mse102x_probe_spi(struct spi_device *spi)
 		 IRQ_SPIBEI |	/* SPI bus error */	\
 		 IRQ_TXPSI |	/* TX process stop */	\
 		 IRQ_RXPSI)	/* RX process stop */
-	ks->rc_ier = STD_IRQ;
+	mse->rc_ier = STD_IRQ;
 
-	kss = to_mse102x_spi(ks);
+	mses = to_mse102x_spi(mse);
 
-	kss->spidev = spi;
-	mutex_init(&kss->lock);
-	INIT_WORK(&kss->tx_work, mse102x_tx_work);
+	mses->spidev = spi;
+	mutex_init(&mses->lock);
+	INIT_WORK(&mses->tx_work, mse102x_tx_work);
 
 	/* initialise pre-made spi transfer messages */
-	spi_message_init(&kss->spi_msg1);
-	spi_message_add_tail(&kss->spi_xfer1, &kss->spi_msg1);
+	spi_message_init(&mses->spi_msg1);
+	spi_message_add_tail(&mses->spi_xfer1, &mses->spi_msg1);
 
-	spi_message_init(&kss->spi_msg2);
-	spi_message_add_tail(&kss->spi_xfer2[0], &kss->spi_msg2);
-	spi_message_add_tail(&kss->spi_xfer2[1], &kss->spi_msg2);
+	spi_message_init(&mses->spi_msg2);
+	spi_message_add_tail(&mses->spi_xfer2[0], &mses->spi_msg2);
+	spi_message_add_tail(&mses->spi_xfer2[1], &mses->spi_msg2);
 
 	netdev->irq = spi->irq;
 
