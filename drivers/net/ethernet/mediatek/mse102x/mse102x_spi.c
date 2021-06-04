@@ -80,8 +80,119 @@ static void mse102x_unlock_spi(struct mse102x_net *mse, unsigned long *flags)
  *
  * All these calls issue SPI transactions to access the chip's registers. They
  * all require that the necessary lock is held to prevent accesses when the
- * chip is busy transferring packet data (RX/TX FIFO accesses).
+ * chip is busy transferring packet data.
  */
+
+static void mse102x_tx_cmd_spi(struct mse102x_net *mse, u16 cmd)
+{
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
+	struct spi_transfer *xfer = &mses->spi_xfer1;
+	struct spi_message *msg = &mses->spi_msg1;
+	__le16 txb[2];
+	int ret;
+
+	txb[0] = cpu_to_le16(DET_CMD);
+	txb[1] = cpu_to_le16(cmd);
+
+	xfer->tx_buf = txb;
+	xfer->rx_buf = NULL;
+	xfer->len = 4;
+
+	ret = spi_sync(mses->spidev, msg);
+	if (ret < 0)
+		netdev_err(mse->netdev, "spi_sync() failed\n");
+}
+
+static void mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
+{
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
+	struct spi_transfer *xfer;
+	struct spi_message *msg;
+	__le16 *txb = (__le16 *)mse->txd;
+	u8 *trx = mse->rxd;
+	int ret;
+
+	txb[0] = 0;
+	txb[1] = 0;
+
+	if (mses->spidev->master->flags & SPI_MASTER_HALF_DUPLEX) {
+		msg = &mses->spi_msg2;
+		xfer = mses->spi_xfer2;
+
+		xfer->tx_buf = txb;
+		xfer->rx_buf = NULL;
+		xfer->len = 2;
+
+		xfer++;
+		xfer->tx_buf = NULL;
+		xfer->rx_buf = trx;
+		xfer->len = 2;
+	} else {
+		msg = &mses->spi_msg1;
+		xfer = &mses->spi_xfer1;
+
+		xfer->tx_buf = txb;
+		xfer->rx_buf = trx;
+		xfer->len = 4;
+	}
+
+	ret = spi_sync(mses->spidev, msg);
+	if (ret < 0)
+		netdev_err(mse->netdev, "read: spi_sync() failed\n");
+	else if (mses->spidev->master->flags & SPI_MASTER_HALF_DUPLEX)
+		memcpy(rxb, trx, 2);
+	else
+		memcpy(rxb, trx + 2, 2);
+}
+
+static void mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
+{
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
+	struct spi_transfer *xfer = &mses->spi_xfer1;
+	struct spi_message *msg = &mses->spi_msg1;
+	struct sk_buff *tskb;
+	u8 pad_len = 0;
+	u8 *ptmp;
+	int ret;
+
+	netif_dbg(mse, tx_queued, mse->netdev, "%s: skb %p, %d@%p\n",
+		  __func__, txp, txp->len, txp->data);
+
+	if (txp->len < 60)
+		pad_len = 60 - txp->len;
+
+	if ((skb_headroom(txp) < DET_SOF_LEN) ||
+	    (skb_tailroom(txp) < DET_DFT_LEN + pad_len)) {
+		tskb = skb_copy_expand(txp, DET_SOF_LEN, DET_DFT_LEN + pad_len, GFP_ATOMIC);
+		if (!tskb)
+			return;
+
+		dev_kfree_skb(txp);
+		txp = tskb;
+	}
+
+	ptmp = skb_push(txp, DET_SOF_LEN);
+	*ptmp = (DET_SOF >> 8) && 0xFF;
+	ptmp++;
+	*ptmp = DET_SOF && 0xFF;
+
+	if (pad_len) {
+		ptmp = skb_put_zero(txp, pad_len);
+	}
+
+	ptmp = skb_put(txp, DET_DFT_LEN);
+	*ptmp = (DET_DFT >> 8) && 0xFF;
+	ptmp++;
+	*ptmp = DET_DFT && 0xFF;
+
+	xfer->tx_buf = txp->data;
+	xfer->rx_buf = NULL;
+	xfer->len = txp->len;
+
+	ret = spi_sync(mses->spidev, msg);
+	if (ret < 0)
+		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
+}
 
 static void mse102x_wrreg16_spi(struct mse102x_net *mse, unsigned int reg,
 			       unsigned int val)
@@ -255,35 +366,24 @@ static void mse102x_flush_tx_work_spi(struct mse102x_net *mse)
 	flush_work(&mses->tx_work);
 }
 
-static unsigned int calc_txlen(unsigned int len)
-{
-	return ALIGN(len + 4, 4);
-}
-
 static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 					 struct net_device *dev)
 {
-	unsigned int needed = calc_txlen(skb->len);
 	struct mse102x_net *mse = netdev_priv(dev);
-	netdev_tx_t ret = NETDEV_TX_OK;
-	struct mse102x_net_spi *mses;
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
-	mses = to_mse102x_spi(mse);
+	/* FIXME this needs proper TX flow control */
+
+	netif_stop_queue(dev);
 
 	netif_dbg(mse, tx_queued, mse->netdev,
 		  "%s: skb %p, %d@%p\n", __func__, skb, skb->len, skb->data);
 
-	if (needed > mse->tx_space) {
-		netif_stop_queue(dev);
-		ret = NETDEV_TX_BUSY;
-	} else {
-		mse->tx_space -= needed;
-		skb_queue_tail(&mse->txq, skb);
-	}
+	skb_queue_tail(&mse->txq, skb);
 
 	schedule_work(&mses->tx_work);
 
-	return ret;
+	return NETDEV_TX_OK;
 }
 
 static int mse102x_probe_spi(struct spi_device *spi)
