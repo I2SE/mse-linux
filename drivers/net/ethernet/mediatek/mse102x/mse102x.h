@@ -5,12 +5,6 @@
 #ifndef __MSE102X_H__
 #define __MSE102X_H__
 
-struct mse102x_rxctrl {
-	u16	mchash[4];
-	u16	rxcr1;
-	u16	rxcr2;
-};
-
 union mse102x_tx_hdr {
 	u8	txb[6];
 	__le16	txw[3];
