@@ -181,10 +181,6 @@ static void mse102x_wrfifo_spi(struct mse102x_net *mse, struct sk_buff *txp,
 		  __func__, txp, txp->len, txp->data, irq);
 
 	fid = mse->fid++;
-	fid &= TXFR_TXFID_MASK;
-
-	if (irq)
-		fid |= TXFR_TXIC;	/* irq on completion */
 
 	/* start header at txb[1] to align txw entries */
 	mse->txh.txb[1] = KS_SPIOP_TXFIFO;
@@ -229,11 +225,7 @@ static void mse102x_tx_work(struct work_struct *work)
 		last = skb_queue_empty(&mse->txq);
 
 		if (txb) {
-			mse102x_wrreg16_spi(mse, KS_RXQCR,
-					   mse->rc_rxqcr | RXQCR_SDA);
 			mse102x_wrfifo_spi(mse, txb, last);
-			mse102x_wrreg16_spi(mse, KS_RXQCR, mse->rc_rxqcr);
-			mse102x_wrreg16_spi(mse, KS_TXQCR, TXQCR_METFE);
 
 			mse102x_done_tx(mse, txb);
 		}

@@ -29,12 +29,6 @@ static void mse102x_unlock(struct mse102x_net *mse, unsigned long *flags)
 	mse->unlock(mse, flags);
 }
 
-static void mse102x_wrreg16(struct mse102x_net *mse, unsigned int reg,
-			   unsigned int val)
-{
-	mse->wrreg16(mse, reg, val);
-}
-
 static unsigned int mse102x_rdreg16(struct mse102x_net *mse,
 				   unsigned int reg)
 {
@@ -72,72 +66,43 @@ static void mse102x_rx_skb(struct mse102x_net *mse, struct sk_buff *skb)
 static void mse102x_rx_pkts(struct mse102x_net *mse)
 {
 	struct sk_buff *skb;
-	unsigned rxfc;
 	unsigned rxlen;
 	unsigned rxstat;
 	u8 *rxpkt;
 
-	rxfc = (mse102x_rdreg16(mse, KS_RXFCTR) >> 8) & 0xff;
+	rxstat = mse102x_rdreg16(mse, 0);
+	rxlen = mse102x_rdreg16(mse, 0);
 
 	netif_dbg(mse, rx_status, mse->netdev,
-		  "%s: %d packets\n", __func__, rxfc);
+		  "rx: stat 0x%04x, len 0x%04x\n", rxstat, rxlen);
 
-	/* Currently we're issuing a read per packet, but we could possibly
-	 * improve the code by issuing a single read, getting the receive
-	 * header, allocating the packet and then reading the packet data
-	 * out in one go.
-	 *
-	 * This form of operation would require us to hold the SPI bus'
-	 * chipselect low during the entie transaction to avoid any
-	 * reset to the data stream coming from the chip.
-	 */
+	if (rxlen > 4) {
+		unsigned int rxalign;
 
-	for (; rxfc != 0; rxfc--) {
-		rxstat = mse102x_rdreg16(mse, KS_RXFHSR);
-		rxlen = mse102x_rdreg16(mse, KS_RXFHBCR) & RXFHBCR_CNT_MASK;
+		rxlen -= 4;
+		rxalign = ALIGN(rxlen, 4);
+		skb = netdev_alloc_skb_ip_align(mse->netdev, rxalign);
+		if (skb) {
 
-		netif_dbg(mse, rx_status, mse->netdev,
-			  "rx: stat 0x%04x, len 0x%04x\n", rxstat, rxlen);
+			/* 4 bytes of status header + 4 bytes of
+			 * garbage: we put them before ethernet
+			 * header, so that they are copied,
+			 * but ignored.
+			 */
 
-		/* the length of the packet includes the 32bit CRC */
+			rxpkt = skb_put(skb, rxlen) - 8;
 
-		/* set dma read address */
-		mse102x_wrreg16(mse, KS_RXFDPR, RXFDPR_RXFPAI | 0x00);
+			mse->rdfifo(mse, rxpkt, rxalign + 8);
 
-		/* start DMA access */
-		mse102x_wrreg16(mse, KS_RXQCR, mse->rc_rxqcr | RXQCR_SDA);
+			if (netif_msg_pktdata(mse))
+				mse102x_dbg_dumpkkt(mse, rxpkt);
 
-		if (rxlen > 4) {
-			unsigned int rxalign;
+			skb->protocol = eth_type_trans(skb, mse->netdev);
+			mse102x_rx_skb(mse, skb);
 
-			rxlen -= 4;
-			rxalign = ALIGN(rxlen, 4);
-			skb = netdev_alloc_skb_ip_align(mse->netdev, rxalign);
-			if (skb) {
-
-				/* 4 bytes of status header + 4 bytes of
-				 * garbage: we put them before ethernet
-				 * header, so that they are copied,
-				 * but ignored.
-				 */
-
-				rxpkt = skb_put(skb, rxlen) - 8;
-
-				mse->rdfifo(mse, rxpkt, rxalign + 8);
-
-				if (netif_msg_pktdata(mse))
-					mse102x_dbg_dumpkkt(mse, rxpkt);
-
-				skb->protocol = eth_type_trans(skb, mse->netdev);
-				mse102x_rx_skb(mse, skb);
-
-				mse->netdev->stats.rx_packets++;
-				mse->netdev->stats.rx_bytes += rxlen;
-			}
+			mse->netdev->stats.rx_packets++;
+			mse->netdev->stats.rx_bytes += rxlen;
 		}
-
-		/* end DMA access and dequeue packet */
-		mse102x_wrreg16(mse, KS_RXQCR, mse->rc_rxqcr | RXQCR_RRXEF);
 	}
 }
 
@@ -181,39 +146,6 @@ static int mse102x_net_open(struct net_device *dev)
 
 	netif_dbg(mse, ifup, mse->netdev, "opening\n");
 
-	/* setup transmission parameters */
-
-	mse102x_wrreg16(mse, KS_TXCR, (TXCR_TXE | /* enable transmit process */
-				     TXCR_TXPE | /* pad to min length */
-				     TXCR_TXCRC | /* add CRC */
-				     TXCR_TXFCE)); /* enable flow control */
-
-	/* auto-increment tx data, reset tx pointer */
-	mse102x_wrreg16(mse, KS_TXFDPR, TXFDPR_TXFPAI);
-
-	/* setup receiver control */
-
-	mse102x_wrreg16(mse, KS_RXCR1, (RXCR1_RXPAFMA | /*  from mac filter */
-				      RXCR1_RXFCE | /* enable flow control */
-				      RXCR1_RXBE | /* broadcast enable */
-				      RXCR1_RXUE | /* unicast enable */
-				      RXCR1_RXE)); /* enable rx block */
-
-	/* transfer entire frames out in one go */
-	mse102x_wrreg16(mse, KS_RXCR2, RXCR2_SRDBL_FRAME);
-
-	/* set receive counter timeouts */
-	mse102x_wrreg16(mse, KS_RXDTTR, 1000); /* 1ms after first frame to IRQ */
-	mse102x_wrreg16(mse, KS_RXDBCTR, 4096); /* >4Kbytes in buffer to IRQ */
-	mse102x_wrreg16(mse, KS_RXFCTR, 10);  /* 10 frames to IRQ */
-
-	mse->rc_rxqcr = (RXQCR_RXFCTE |  /* IRQ on frame count exceeded */
-			RXQCR_RXDBCTE | /* IRQ on byte count exceeded */
-			RXQCR_RXDTTE);  /* IRQ on time exceeded */
-
-	mse102x_wrreg16(mse, KS_RXQCR, mse->rc_rxqcr);
-
-
 	netif_start_queue(mse->netdev);
 
 	netif_dbg(mse, ifup, mse->netdev, "network device up\n");
@@ -226,7 +158,6 @@ static int mse102x_net_open(struct net_device *dev)
 static int mse102x_net_stop(struct net_device *dev)
 {
 	struct mse102x_net *mse = netdev_priv(dev);
-	unsigned long flags;
 
 	netif_info(mse, ifdown, dev, "shutting down\n");
 
@@ -234,16 +165,6 @@ static int mse102x_net_stop(struct net_device *dev)
 
 	/* stop any outstanding work */
 	mse102x_flush_tx_work(mse);
-	flush_work(&mse->rxctrl_work);
-
-	mse102x_lock(mse, &flags);
-	/* shutdown RX process */
-	mse102x_wrreg16(mse, KS_RXCR1, 0x0000);
-
-	/* shutdown TX process */
-	mse102x_wrreg16(mse, KS_TXCR, 0x0000);
-
-	mse102x_unlock(mse, &flags);
 
 	/* ensure any queued tx buffers are dumped */
 	while (!skb_queue_empty(&mse->txq)) {
@@ -268,79 +189,11 @@ static netdev_tx_t mse102x_start_xmit(struct sk_buff *skb,
 	return mse->start_xmit(skb, dev);
 }
 
-static void mse102x_rxctrl_work(struct work_struct *work)
-{
-	struct mse102x_net *mse = container_of(work, struct mse102x_net, rxctrl_work);
-	unsigned long flags;
-
-	mse102x_lock(mse, &flags);
-
-	/* need to shutdown RXQ before modifying filter parameters */
-	mse102x_wrreg16(mse, KS_RXCR1, 0x00);
-
-	mse102x_unlock(mse, &flags);
-}
-
-static void mse102x_set_rx_mode(struct net_device *dev)
-{
-	struct mse102x_net *mse = netdev_priv(dev);
-	struct mse102x_rxctrl rxctrl;
-
-	memset(&rxctrl, 0, sizeof(rxctrl));
-
-	if (dev->flags & IFF_PROMISC) {
-		/* interface to receive everything */
-
-		rxctrl.rxcr1 = RXCR1_RXAE | RXCR1_RXINVF;
-	} else if (dev->flags & IFF_ALLMULTI) {
-		/* accept all multicast packets */
-
-		rxctrl.rxcr1 = (RXCR1_RXME | RXCR1_RXAE |
-				RXCR1_RXPAFMA | RXCR1_RXMAFMA);
-	} else if (dev->flags & IFF_MULTICAST && !netdev_mc_empty(dev)) {
-		struct netdev_hw_addr *ha;
-		u32 crc;
-
-		/* accept some multicast */
-
-		netdev_for_each_mc_addr(ha, dev) {
-			crc = ether_crc(ETH_ALEN, ha->addr);
-			crc >>= (32 - 6);  /* get top six bits */
-
-			rxctrl.mchash[crc >> 4] |= (1 << (crc & 0xf));
-		}
-
-		rxctrl.rxcr1 = RXCR1_RXME | RXCR1_RXPAFMA;
-	} else {
-		/* just accept broadcast / unicast */
-		rxctrl.rxcr1 = RXCR1_RXPAFMA;
-	}
-
-	rxctrl.rxcr1 |= (RXCR1_RXUE | /* unicast enable */
-			 RXCR1_RXBE | /* broadcast enable */
-			 RXCR1_RXE | /* RX process enable */
-			 RXCR1_RXFCE); /* enable flow control */
-
-	rxctrl.rxcr2 |= RXCR2_SRDBL_FRAME;
-
-	/* schedule work to do the actual set of the data if needed */
-
-	spin_lock(&mse->statelock);
-
-	if (memcmp(&rxctrl, &mse->rxctrl, sizeof(rxctrl)) != 0) {
-		memcpy(&mse->rxctrl, &rxctrl, sizeof(mse->rxctrl));
-		schedule_work(&mse->rxctrl_work);
-	}
-
-	spin_unlock(&mse->statelock);
-}
-
 static const struct net_device_ops mse102x_netdev_ops = {
 	.ndo_open		= mse102x_net_open,
 	.ndo_stop		= mse102x_net_stop,
 	.ndo_start_xmit		= mse102x_start_xmit,
 	.ndo_set_mac_address	= eth_mac_addr,
-	.ndo_set_rx_mode	= mse102x_set_rx_mode,
 	.ndo_validate_addr	= eth_validate_addr,
 };
 
@@ -408,15 +261,12 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 			int msg_en)
 {
 	struct mse102x_net *mse = netdev_priv(netdev);
-	unsigned cider;
 	int ret;
 
 	mse->netdev = netdev;
 	mse->tx_space = 6144;
 
 	spin_lock_init(&mse->statelock);
-
-	INIT_WORK(&mse->rxctrl_work, mse102x_rxctrl_work);
 
 	dev_info(dev, "message enable is %d\n", msg_en);
 
@@ -435,13 +285,6 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 	netif_carrier_off(mse->netdev);
 	netdev->if_port = IF_PORT_100BASET;
 	netdev->netdev_ops = &mse102x_netdev_ops;
-
-	/* simple check for a valid chip being connected to the bus */
-	cider = mse102x_rdreg16(mse, KS_CIDER);
-	if ((cider & ~CIDER_REV_MASK) != CIDER_ID) {
-		dev_err(dev, "failed to read device ID\n");
-		return -ENODEV;
-	}
 
 	mse102x_init_mac(mse, dev->of_node);
 
