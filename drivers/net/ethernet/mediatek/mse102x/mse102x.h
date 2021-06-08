@@ -38,15 +38,4 @@ netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb, struct net_device *dev);
 static __maybe_unused SIMPLE_DEV_PM_OPS(mse102x_pm_ops,
 					mse102x_suspend, mse102x_resume);
 
-static void __maybe_unused mse102x_done_tx(struct mse102x_net *mse,
-					  struct sk_buff *txb)
-{
-	struct net_device *dev = mse->netdev;
-
-	dev->stats.tx_bytes += txb->len;
-	dev->stats.tx_packets++;
-
-	dev_kfree_skb(txb);
-}
-
 #endif /* __MSE102X_H__ */

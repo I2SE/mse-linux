@@ -402,9 +402,14 @@ static void mse102x_tx_work(struct work_struct *work)
 		last = skb_queue_empty(&mse->txq);
 
 		if (txb) {
+			struct net_device *dev = mse->netdev;
+
 			mse102x_wrfifo_spi(mse, txb, last);
 
-			mse102x_done_tx(mse, txb);
+			dev->stats.tx_bytes += txb->len;
+			dev->stats.tx_packets++;
+
+			dev_kfree_skb(txb);
 		}
 	}
 
