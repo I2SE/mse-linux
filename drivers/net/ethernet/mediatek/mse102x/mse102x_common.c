@@ -197,9 +197,11 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 
 	ret = register_netdev(netdev);
 	if (ret) {
-		dev_err(dev, "failed to register network device\n");
+		dev_err(dev, "failed to register network device: %d\n", ret);
 		return ret;
 	}
+
+	dev_info(dev, "%s: Success\n", __func__);
 
 	return 0;
 }
