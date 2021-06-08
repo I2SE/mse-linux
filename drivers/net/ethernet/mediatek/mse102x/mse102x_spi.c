@@ -482,7 +482,8 @@ static int mse102x_remove_spi(struct spi_device *spi)
 }
 
 static const struct of_device_id mse102x_match_table[] = {
-	{ .compatible = "mediatek,mse102x" },
+	{ .compatible = "mediatek,mse1021" },
+	{ .compatible = "mediatek,mse1022" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, mse102x_match_table);
