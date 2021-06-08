@@ -62,14 +62,14 @@ struct mse102x_net_spi {
 #define MK_OP(_byteen, _reg)	\
 	(BYTE_EN(_byteen) | (_reg) << (8 + 2) | (_reg) >> 6)
 
-static void mse102x_lock_spi(struct mse102x_net *mse, unsigned long *flags)
+void mse102x_lock_spi(struct mse102x_net *mse, unsigned long *flags)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
 	mutex_lock(&mses->lock);
 }
 
-static void mse102x_unlock_spi(struct mse102x_net *mse, unsigned long *flags)
+void mse102x_unlock_spi(struct mse102x_net *mse, unsigned long *flags)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
@@ -326,9 +326,61 @@ static void mse102x_wrfifo_spi(struct mse102x_net *mse, struct sk_buff *txp,
 		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
 }
 
-static void mse102x_rx_skb_spi(struct mse102x_net *mse, struct sk_buff *skb)
+static void mse102x_dbg_dumpkkt(struct mse102x_net *mse, u8 *rxpkt)
 {
-	netif_rx_ni(skb);
+	netdev_dbg(mse->netdev,
+		   "pkt %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x\n",
+		   rxpkt[4], rxpkt[5], rxpkt[6], rxpkt[7],
+		   rxpkt[8], rxpkt[9], rxpkt[10], rxpkt[11],
+		   rxpkt[12], rxpkt[13], rxpkt[14], rxpkt[15]);
+}
+
+void mse102x_rx_pkts_spi(struct mse102x_net *mse)
+{
+	struct sk_buff *skb;
+	unsigned long flags;
+	unsigned rxlen;
+	unsigned rxstat;
+	u8 *rxpkt;
+
+	mse102x_lock_spi(mse, &flags);
+
+	rxstat = mse102x_rdreg16_spi(mse, 0);
+	rxlen = mse102x_rdreg16_spi(mse, 0);
+
+	netif_dbg(mse, rx_status, mse->netdev,
+		  "rx: stat 0x%04x, len 0x%04x\n", rxstat, rxlen);
+
+	if (rxlen > 4) {
+		unsigned int rxalign;
+
+		rxlen -= 4;
+		rxalign = ALIGN(rxlen, 4);
+		skb = netdev_alloc_skb_ip_align(mse->netdev, rxalign);
+		if (skb) {
+
+			/* 4 bytes of status header + 4 bytes of
+			 * garbage: we put them before ethernet
+			 * header, so that they are copied,
+			 * but ignored.
+			 */
+
+			rxpkt = skb_put(skb, rxlen) - 8;
+
+			mse102x_rdfifo_spi(mse, rxpkt, rxalign + 8);
+
+			if (netif_msg_pktdata(mse))
+				mse102x_dbg_dumpkkt(mse, rxpkt);
+
+			skb->protocol = eth_type_trans(skb, mse->netdev);
+			netif_rx_ni(skb);
+
+			mse->netdev->stats.rx_packets++;
+			mse->netdev->stats.rx_bytes += rxlen;
+		}
+	}
+
+	mse102x_unlock_spi(mse, &flags);
 }
 
 static void mse102x_tx_work(struct work_struct *work)
@@ -359,15 +411,15 @@ static void mse102x_tx_work(struct work_struct *work)
 	mse102x_unlock_spi(mse, &flags);
 }
 
-static void mse102x_flush_tx_work_spi(struct mse102x_net *mse)
+void mse102x_flush_tx_work_spi(struct mse102x_net *mse)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
 	flush_work(&mses->tx_work);
 }
 
-static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
-					 struct net_device *dev)
+netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
+				   struct net_device *dev)
 {
 	struct mse102x_net *mse = netdev_priv(dev);
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
@@ -400,17 +452,6 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	spi->bits_per_word = 8;
 
 	mse = netdev_priv(netdev);
-
-	mse->lock = mse102x_lock_spi;
-	mse->unlock = mse102x_unlock_spi;
-	mse->rdreg16 = mse102x_rdreg16_spi;
-	mse->wrreg16 = mse102x_wrreg16_spi;
-	mse->rdfifo = mse102x_rdfifo_spi;
-	mse->wrfifo = mse102x_wrfifo_spi;
-	mse->start_xmit = mse102x_start_xmit_spi;
-	mse->rx_skb = mse102x_rx_skb_spi;
-	mse->flush_tx_work = mse102x_flush_tx_work_spi;
-
 	mses = to_mse102x_spi(mse);
 
 	mses->spidev = spi;

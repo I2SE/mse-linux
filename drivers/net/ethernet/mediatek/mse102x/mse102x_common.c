@@ -19,22 +19,6 @@
 
 #include "mse102x.h"
 
-static void mse102x_lock(struct mse102x_net *mse, unsigned long *flags)
-{
-	mse->lock(mse, flags);
-}
-
-static void mse102x_unlock(struct mse102x_net *mse, unsigned long *flags)
-{
-	mse->unlock(mse, flags);
-}
-
-static unsigned int mse102x_rdreg16(struct mse102x_net *mse,
-				   unsigned int reg)
-{
-	return mse->rdreg16(mse, reg);
-}
-
 static void mse102x_init_mac(struct mse102x_net *mse, struct device_node *np)
 {
 	struct net_device *dev = mse->netdev;
@@ -49,81 +33,13 @@ static void mse102x_init_mac(struct mse102x_net *mse, struct device_node *np)
 	eth_hw_addr_random(dev);
 }
 
-static void mse102x_dbg_dumpkkt(struct mse102x_net *mse, u8 *rxpkt)
-{
-	netdev_dbg(mse->netdev,
-		   "pkt %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x\n",
-		   rxpkt[4], rxpkt[5], rxpkt[6], rxpkt[7],
-		   rxpkt[8], rxpkt[9], rxpkt[10], rxpkt[11],
-		   rxpkt[12], rxpkt[13], rxpkt[14], rxpkt[15]);
-}
-
-static void mse102x_rx_skb(struct mse102x_net *mse, struct sk_buff *skb)
-{
-	mse->rx_skb(mse, skb);
-}
-
-static void mse102x_rx_pkts(struct mse102x_net *mse)
-{
-	struct sk_buff *skb;
-	unsigned rxlen;
-	unsigned rxstat;
-	u8 *rxpkt;
-
-	rxstat = mse102x_rdreg16(mse, 0);
-	rxlen = mse102x_rdreg16(mse, 0);
-
-	netif_dbg(mse, rx_status, mse->netdev,
-		  "rx: stat 0x%04x, len 0x%04x\n", rxstat, rxlen);
-
-	if (rxlen > 4) {
-		unsigned int rxalign;
-
-		rxlen -= 4;
-		rxalign = ALIGN(rxlen, 4);
-		skb = netdev_alloc_skb_ip_align(mse->netdev, rxalign);
-		if (skb) {
-
-			/* 4 bytes of status header + 4 bytes of
-			 * garbage: we put them before ethernet
-			 * header, so that they are copied,
-			 * but ignored.
-			 */
-
-			rxpkt = skb_put(skb, rxlen) - 8;
-
-			mse->rdfifo(mse, rxpkt, rxalign + 8);
-
-			if (netif_msg_pktdata(mse))
-				mse102x_dbg_dumpkkt(mse, rxpkt);
-
-			skb->protocol = eth_type_trans(skb, mse->netdev);
-			mse102x_rx_skb(mse, skb);
-
-			mse->netdev->stats.rx_packets++;
-			mse->netdev->stats.rx_bytes += rxlen;
-		}
-	}
-}
-
 static irqreturn_t mse102x_irq(int irq, void *_mse)
 {
 	struct mse102x_net *mse = _mse;
-	unsigned long flags;
 
-	mse102x_lock(mse, &flags);
-
-	mse102x_rx_pkts(mse);
-
-	mse102x_unlock(mse, &flags);
+	mse102x_rx_pkts_spi(mse);
 
 	return IRQ_HANDLED;
-}
-
-static void mse102x_flush_tx_work(struct mse102x_net *mse)
-{
-	if (mse->flush_tx_work)
-		mse->flush_tx_work(mse);
 }
 
 static int mse102x_net_open(struct net_device *dev)
@@ -142,7 +58,7 @@ static int mse102x_net_open(struct net_device *dev)
 
 	/* lock the card, even if we may not actually be doing anything
 	 * else at the moment */
-	mse102x_lock(mse, &flags);
+	mse102x_lock_spi(mse, &flags);
 
 	netif_dbg(mse, ifup, mse->netdev, "opening\n");
 
@@ -150,7 +66,7 @@ static int mse102x_net_open(struct net_device *dev)
 
 	netif_dbg(mse, ifup, mse->netdev, "network device up\n");
 
-	mse102x_unlock(mse, &flags);
+	mse102x_unlock_spi(mse, &flags);
 
 	return 0;
 }
@@ -164,7 +80,7 @@ static int mse102x_net_stop(struct net_device *dev)
 	netif_stop_queue(dev);
 
 	/* stop any outstanding work */
-	mse102x_flush_tx_work(mse);
+	mse102x_flush_tx_work_spi(mse);
 
 	/* ensure any queued tx buffers are dumped */
 	while (!skb_queue_empty(&mse->txq)) {
@@ -181,18 +97,10 @@ static int mse102x_net_stop(struct net_device *dev)
 	return 0;
 }
 
-static netdev_tx_t mse102x_start_xmit(struct sk_buff *skb,
-				     struct net_device *dev)
-{
-	struct mse102x_net *mse = netdev_priv(dev);
-
-	return mse->start_xmit(skb, dev);
-}
-
 static const struct net_device_ops mse102x_netdev_ops = {
 	.ndo_open		= mse102x_net_open,
 	.ndo_stop		= mse102x_net_stop,
-	.ndo_start_xmit		= mse102x_start_xmit,
+	.ndo_start_xmit		= mse102x_start_xmit_spi,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
 };

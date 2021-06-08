@@ -21,24 +21,6 @@ struct mse102x_net {
 	u8			fid;
 
 	struct sk_buff_head	txq;
-
-	void			(*lock)(struct mse102x_net *mse,
-					unsigned long *flags);
-	void			(*unlock)(struct mse102x_net *mse,
-					  unsigned long *flags);
-	unsigned int		(*rdreg16)(struct mse102x_net *mse,
-					   unsigned int reg);
-	void			(*wrreg16)(struct mse102x_net *mse,
-					   unsigned int reg, unsigned int val);
-	void			(*rdfifo)(struct mse102x_net *mse, u8 *buff,
-					  unsigned int len);
-	void			(*wrfifo)(struct mse102x_net *mse,
-					  struct sk_buff *txp, bool irq);
-	netdev_tx_t		(*start_xmit)(struct sk_buff *skb,
-					      struct net_device *dev);
-	void			(*rx_skb)(struct mse102x_net *mse,
-					  struct sk_buff *skb);
-	void			(*flush_tx_work)(struct mse102x_net *mse);
 };
 
 int mse102x_probe_common(struct net_device *netdev, struct device *dev,
@@ -46,6 +28,12 @@ int mse102x_probe_common(struct net_device *netdev, struct device *dev,
 int mse102x_remove_common(struct device *dev);
 int mse102x_suspend(struct device *dev);
 int mse102x_resume(struct device *dev);
+
+void mse102x_lock_spi(struct mse102x_net *mse, unsigned long *flags);
+void mse102x_unlock_spi(struct mse102x_net *mse, unsigned long *flags);
+void mse102x_rx_pkts_spi(struct mse102x_net *mse);
+void mse102x_flush_tx_work_spi(struct mse102x_net *mse);
+netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb, struct net_device *dev);
 
 static __maybe_unused SIMPLE_DEV_PM_OPS(mse102x_pm_ops,
 					mse102x_suspend, mse102x_resume);
