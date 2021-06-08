@@ -13,7 +13,6 @@
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/cache.h>
-#include <linux/crc32.h>
 
 #include <linux/of_net.h>
 
@@ -65,6 +64,8 @@ static int mse102x_net_open(struct net_device *dev)
 	netif_dbg(mse, ifup, mse->netdev, "opening\n");
 
 	netif_start_queue(mse->netdev);
+
+	netif_carrier_on(mse->netdev);
 
 	netif_dbg(mse, ifup, mse->netdev, "network device up\n");
 

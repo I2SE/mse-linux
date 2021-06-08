@@ -13,7 +13,6 @@
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/cache.h>
-#include <linux/crc32.h>
 
 #include <linux/spi/spi.h>
 #include <linux/of_net.h>
@@ -194,27 +193,6 @@ static void mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
 }
 
-static void mse102x_wrreg16_spi(struct mse102x_net *mse, unsigned int reg,
-			       unsigned int val)
-{
-	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-	struct spi_transfer *xfer = &mses->spi_xfer1;
-	struct spi_message *msg = &mses->spi_msg1;
-	__le16 txb[2];
-	int ret;
-
-	txb[0] = cpu_to_le16(MK_OP(reg & 2 ? 0xC : 0x03, reg) | KS_SPIOP_WR);
-	txb[1] = cpu_to_le16(val);
-
-	xfer->tx_buf = txb;
-	xfer->rx_buf = NULL;
-	xfer->len = 4;
-
-	ret = spi_sync(mses->spidev, msg);
-	if (ret < 0)
-		netdev_err(mse->netdev, "spi_sync() failed\n");
-}
-
 static void mse102x_rdreg(struct mse102x_net *mse, unsigned int op,
 			 u8 *rxb, unsigned int rxl)
 {
@@ -293,39 +271,6 @@ static void mse102x_rdfifo_spi(struct mse102x_net *mse, u8 *buff, unsigned int l
 		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
 }
 
-static void mse102x_wrfifo_spi(struct mse102x_net *mse, struct sk_buff *txp,
-			      bool irq)
-{
-	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-	struct spi_transfer *xfer = mses->spi_xfer2;
-	struct spi_message *msg = &mses->spi_msg2;
-	unsigned int fid = 0;
-	int ret;
-
-	netif_dbg(mse, tx_queued, mse->netdev, "%s: skb %p, %d@%p, irq %d\n",
-		  __func__, txp, txp->len, txp->data, irq);
-
-	fid = mse->fid++;
-
-	/* start header at txb[1] to align txw entries */
-	mse->txh.txb[1] = KS_SPIOP_TXFIFO;
-	mse->txh.txw[1] = cpu_to_le16(fid);
-	mse->txh.txw[2] = cpu_to_le16(txp->len);
-
-	xfer->tx_buf = &mse->txh.txb[1];
-	xfer->rx_buf = NULL;
-	xfer->len = 5;
-
-	xfer++;
-	xfer->tx_buf = txp->data;
-	xfer->rx_buf = NULL;
-	xfer->len = ALIGN(txp->len, 4);
-
-	ret = spi_sync(mses->spidev, msg);
-	if (ret < 0)
-		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
-}
-
 static void mse102x_dbg_dumpkkt(struct mse102x_net *mse, u8 *rxpkt)
 {
 	netdev_dbg(mse->netdev,
@@ -387,32 +332,48 @@ static void mse102x_tx_work(struct work_struct *work)
 {
 	struct mse102x_net_spi *mses;
 	struct mse102x_net *mse;
+	struct device *dev;
 	unsigned long flags;
 	struct sk_buff *txb;
-	bool last;
+	__le16 rx = 0;
 
 	mses = container_of(work, struct mse102x_net_spi, tx_work);
 	mse = &mses->mse102x;
-	last = skb_queue_empty(&mse->txq);
+	dev = &mses->spidev->dev;
+
+	dev_info(dev, "%s: Called\n", __func__);
 
 	mse102x_lock_spi(mse, &flags);
 
-	while (!last) {
-		txb = skb_dequeue(&mse->txq);
-		last = skb_queue_empty(&mse->txq);
+	txb = skb_dequeue(&mse->txq);
+	if (!txb)
+		goto unlock_spi;
 
-		if (txb) {
-			struct net_device *dev = mse->netdev;
+	mse102x_tx_cmd_spi(mse, CMD_RTS | txb->len);
+	mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 
-			mse102x_wrfifo_spi(mse, txb, last);
+	if (le16_to_cpu(rx) != CMD_CTR) {
+		netdev_err(mse->netdev, "%s: No reply to first CMD_RTS (%04x)\n", __func__, rx);
+		usleep_range(50, 100);
 
-			dev->stats.tx_bytes += txb->len;
-			dev->stats.tx_packets++;
-
-			dev_kfree_skb(txb);
+		/* Retransmit CMD_RTS */
+		mse102x_tx_cmd_spi(mse, CMD_RTS | txb->len);
+		mse102x_rx_cmd_spi(mse, (u8 *)&rx);
+		if (le16_to_cpu(rx) != CMD_CTR) {
+			netdev_err(mse->netdev, "%s: Drop frame (%04x)\n", __func__, rx);
+			goto free_skb;
 		}
 	}
 
+	mse102x_tx_frame_spi(mse, txb);
+
+	mse->netdev->stats.tx_bytes += txb->len;
+	mse->netdev->stats.tx_packets++;
+
+free_skb:
+	dev_kfree_skb(txb);
+
+unlock_spi:
 	mse102x_unlock_spi(mse, &flags);
 }
 
