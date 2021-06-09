@@ -341,8 +341,6 @@ static void mse102x_tx_work(struct work_struct *work)
 	mse = &mses->mse102x;
 	dev = &mses->spidev->dev;
 
-	dev_info(dev, "%s: Called\n", __func__);
-
 	mse102x_lock_spi(mse, &flags);
 
 	txb = skb_dequeue(&mse->txq);
@@ -375,6 +373,8 @@ free_skb:
 
 unlock_spi:
 	mse102x_unlock_spi(mse, &flags);
+
+	netif_wake_queue(mse->netdev);
 }
 
 void mse102x_flush_tx_work_spi(struct mse102x_net *mse)
@@ -416,6 +416,9 @@ static int mse102x_probe_spi(struct spi_device *spi)
 		return -ENOMEM;
 
 	spi->bits_per_word = 8;
+	spi->mode = SPI_MODE_3;
+
+	dev_info(dev, "max_speed_hz=%d\n", spi->max_speed_hz);
 
 	mse = netdev_priv(netdev);
 	mses = to_mse102x_spi(mse);
