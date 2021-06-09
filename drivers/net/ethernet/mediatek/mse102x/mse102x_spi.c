@@ -410,13 +410,19 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	struct mse102x_net_spi *mses;
 	struct net_device *netdev;
 	struct mse102x_net *mse;
+	int ret;
+
+	spi->bits_per_word = 8;
+	spi->mode = SPI_MODE_3;
+	ret = spi_setup(spi);
+	if (ret < 0) {
+		dev_err(&spi->dev, "Unable to setup SPI device: %d\n", ret);
+		return ret;
+	}
 
 	netdev = devm_alloc_etherdev(dev, sizeof(struct mse102x_net_spi));
 	if (!netdev)
 		return -ENOMEM;
-
-	spi->bits_per_word = 8;
-	spi->mode = SPI_MODE_3;
 
 	dev_info(dev, "max_speed_hz=%d\n", spi->max_speed_hz);
 
