@@ -422,6 +422,9 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	if (!netdev)
 		return -ENOMEM;
 
+	netdev->priv_flags &= ~IFF_TX_SKB_SHARING;
+	netdev->tx_queue_len = 100;
+
 	dev_info(dev, "max_speed_hz=%d, half_duplex=%d\n", spi->max_speed_hz, (spi->master->flags & SPI_MASTER_HALF_DUPLEX) ? 1 : 0);
 
 	mse = netdev_priv(netdev);
