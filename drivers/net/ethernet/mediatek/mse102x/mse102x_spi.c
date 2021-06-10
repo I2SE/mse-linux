@@ -114,34 +114,23 @@ static void mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 	txb[0] = 0;
 	txb[1] = 0;
 
-	if (mses->spidev->master->flags & SPI_MASTER_HALF_DUPLEX) {
-		msg = &mses->spi_msg2;
-		xfer = mses->spi_xfer2;
+	msg = &mses->spi_msg2;
+	xfer = mses->spi_xfer2;
 
-		xfer->tx_buf = txb;
-		xfer->rx_buf = NULL;
-		xfer->len = 2;
+	xfer->tx_buf = txb;
+	xfer->rx_buf = NULL;
+	xfer->len = 2;
 
-		xfer++;
-		xfer->tx_buf = NULL;
-		xfer->rx_buf = trx;
-		xfer->len = 2;
-	} else {
-		msg = &mses->spi_msg1;
-		xfer = &mses->spi_xfer1;
-
-		xfer->tx_buf = txb;
-		xfer->rx_buf = trx;
-		xfer->len = 4;
-	}
+	xfer++;
+	xfer->tx_buf = NULL;
+	xfer->rx_buf = trx;
+	xfer->len = 2;
 
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0)
 		netdev_err(mse->netdev, "read: spi_sync() failed\n");
-	else if (mses->spidev->master->flags & SPI_MASTER_HALF_DUPLEX)
-		memcpy(rxb, trx, 2);
 	else
-		memcpy(rxb, trx + 2, 2);
+		memcpy(rxb, trx, 2);
 }
 
 static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
