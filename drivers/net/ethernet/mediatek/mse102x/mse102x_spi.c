@@ -144,7 +144,7 @@ static void mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 		memcpy(rxb, trx + 2, 2);
 }
 
-static void mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
+static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	struct spi_transfer *xfer = &mses->spi_xfer1;
@@ -164,7 +164,7 @@ static void mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 	    (skb_tailroom(txp) < DET_DFT_LEN + pad_len)) {
 		tskb = skb_copy_expand(txp, DET_SOF_LEN, DET_DFT_LEN + pad_len, GFP_ATOMIC);
 		if (!tskb)
-			return;
+			return -ENOMEM;
 
 		dev_kfree_skb(txp);
 		txp = tskb;
@@ -191,6 +191,8 @@ static void mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0)
 		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
+
+	return ret;
 }
 
 static void mse102x_rdreg(struct mse102x_net *mse, unsigned int op,
@@ -359,14 +361,18 @@ static void mse102x_tx_work(struct work_struct *work)
 		mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 		if (be16_to_cpu(rx) != CMD_CTR) {
 			netdev_err(mse->netdev, "%s: Drop frame (%04x)\n", __func__, rx);
+			mse->netdev->stats.tx_dropped++;
 			goto free_skb;
 		}
 	}
 
-	mse102x_tx_frame_spi(mse, txb);
-
-	mse->netdev->stats.tx_bytes += txb->len;
-	mse->netdev->stats.tx_packets++;
+	if (mse102x_tx_frame_spi(mse, txb)) {
+		netdev_err(mse->netdev, "%s: Drop frame\n", __func__);
+		mse->netdev->stats.tx_dropped++;
+	} else {
+		mse->netdev->stats.tx_bytes += txb->len;
+		mse->netdev->stats.tx_packets++;
+	}
 
 free_skb:
 	dev_kfree_skb(txb);
