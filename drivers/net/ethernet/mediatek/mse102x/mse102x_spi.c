@@ -87,11 +87,11 @@ static void mse102x_tx_cmd_spi(struct mse102x_net *mse, u16 cmd)
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	struct spi_transfer *xfer = &mses->spi_xfer1;
 	struct spi_message *msg = &mses->spi_msg1;
-	__le16 txb[2];
+	__be16 txb[2];
 	int ret;
 
-	txb[0] = cpu_to_le16(DET_CMD);
-	txb[1] = cpu_to_le16(cmd);
+	txb[0] = cpu_to_be16(DET_CMD);
+	txb[1] = cpu_to_be16(cmd);
 
 	xfer->tx_buf = txb;
 	xfer->rx_buf = NULL;
@@ -107,7 +107,7 @@ static void mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	struct spi_transfer *xfer;
 	struct spi_message *msg;
-	__le16 *txb = (__le16 *)mse->txd;
+	__be16 *txb = (__be16 *)mse->txd;
 	u8 *trx = mse->rxd;
 	int ret;
 
@@ -335,7 +335,7 @@ static void mse102x_tx_work(struct work_struct *work)
 	struct device *dev;
 	unsigned long flags;
 	struct sk_buff *txb;
-	__le16 rx = 0;
+	__be16 rx = 0;
 
 	mses = container_of(work, struct mse102x_net_spi, tx_work);
 	mse = &mses->mse102x;
@@ -350,14 +350,14 @@ static void mse102x_tx_work(struct work_struct *work)
 	mse102x_tx_cmd_spi(mse, CMD_RTS | txb->len);
 	mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 
-	if (le16_to_cpu(rx) != CMD_CTR) {
+	if (be16_to_cpu(rx) != CMD_CTR) {
 		netdev_err(mse->netdev, "%s: No reply to first CMD_RTS (%04x)\n", __func__, rx);
 		usleep_range(50, 100);
 
 		/* Retransmit CMD_RTS */
 		mse102x_tx_cmd_spi(mse, CMD_RTS | txb->len);
 		mse102x_rx_cmd_spi(mse, (u8 *)&rx);
-		if (le16_to_cpu(rx) != CMD_CTR) {
+		if (be16_to_cpu(rx) != CMD_CTR) {
 			netdev_err(mse->netdev, "%s: Drop frame (%04x)\n", __func__, rx);
 			goto free_skb;
 		}
