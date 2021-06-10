@@ -328,6 +328,7 @@ static void mse102x_tx_work(struct work_struct *work)
 	struct sk_buff *txb;
 	unsigned int pad_len;
 	__be16 rx = 0;
+	u16 cmd_resp;
 
 	mses = container_of(work, struct mse102x_net_spi, tx_work);
 	mse = &mses->mse102x;
@@ -343,23 +344,28 @@ static void mse102x_tx_work(struct work_struct *work)
 
 	mse102x_tx_cmd_spi(mse, CMD_RTS | pad_len);
 	mse102x_rx_cmd_spi(mse, (u8 *)&rx);
+	cmd_resp = be16_to_cpu(rx);
 
-	if (be16_to_cpu(rx) != CMD_CTR) {
-		netdev_err(mse->netdev, "%s: No reply to first CMD_RTS (%04x, %u)\n", __func__, rx, txb->len);
+	if (cmd_resp != CMD_CTR) {
 		usleep_range(50, 100);
 
 		/* Retransmit CMD_RTS */
 		mse102x_tx_cmd_spi(mse, CMD_RTS | pad_len);
 		mse102x_rx_cmd_spi(mse, (u8 *)&rx);
-		if (be16_to_cpu(rx) != CMD_CTR) {
-			netdev_err(mse->netdev, "%s: Drop frame (%04x, %u)\n", __func__, rx, txb->len);
+		cmd_resp = be16_to_cpu(rx);
+		if (cmd_resp != CMD_CTR) {
+			netdev_err(mse->netdev, "%s: Drop frame (0x%04x, %u)\n",
+				   __func__, cmd_resp, txb->len);
 			mse->netdev->stats.tx_dropped++;
 			goto free_skb;
+		} else {
+			netdev_warn(mse->netdev, "%s: No response to first CMD_RTS (0x%04x, %u)\n",
+				    __func__, cmd_resp, txb->len);
 		}
 	}
 
 	if (mse102x_tx_frame_spi(mse, txb)) {
-		netdev_err(mse->netdev, "%s: Drop frame\n", __func__);
+		netdev_err(mse->netdev, "%s: Drop frame (%u)\n", __func__, txb->len);
 		mse->netdev->stats.tx_dropped++;
 	} else {
 		mse->netdev->stats.tx_bytes += txb->len;
@@ -425,7 +431,9 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	netdev->priv_flags &= ~IFF_TX_SKB_SHARING;
 	netdev->tx_queue_len = 100;
 
-	dev_info(dev, "max_speed_hz=%d, half_duplex=%d\n", spi->max_speed_hz, (spi->master->flags & SPI_MASTER_HALF_DUPLEX) ? 1 : 0);
+	dev_info(dev, "max_speed_hz=%d, half_duplex=%d\n",
+		 spi->max_speed_hz,
+		 (spi->master->flags & SPI_MASTER_HALF_DUPLEX) ? 1 : 0);
 
 	mse = netdev_priv(netdev);
 	mses = to_mse102x_spi(mse);
