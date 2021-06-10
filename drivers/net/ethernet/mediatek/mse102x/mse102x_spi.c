@@ -326,6 +326,7 @@ static void mse102x_tx_work(struct work_struct *work)
 	struct device *dev;
 	unsigned long flags;
 	struct sk_buff *txb;
+	unsigned int pad_len;
 	__be16 rx = 0;
 
 	mses = container_of(work, struct mse102x_net_spi, tx_work);
@@ -338,18 +339,20 @@ static void mse102x_tx_work(struct work_struct *work)
 	if (!txb)
 		goto unlock_spi;
 
-	mse102x_tx_cmd_spi(mse, CMD_RTS | txb->len);
+	pad_len = max_t(unsigned int, txb->len, 60);
+
+	mse102x_tx_cmd_spi(mse, CMD_RTS | pad_len);
 	mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 
 	if (be16_to_cpu(rx) != CMD_CTR) {
-		netdev_err(mse->netdev, "%s: No reply to first CMD_RTS (%04x)\n", __func__, rx);
+		netdev_err(mse->netdev, "%s: No reply to first CMD_RTS (%04x, %u)\n", __func__, rx, txb->len);
 		usleep_range(50, 100);
 
 		/* Retransmit CMD_RTS */
-		mse102x_tx_cmd_spi(mse, CMD_RTS | txb->len);
+		mse102x_tx_cmd_spi(mse, CMD_RTS | pad_len);
 		mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 		if (be16_to_cpu(rx) != CMD_CTR) {
-			netdev_err(mse->netdev, "%s: Drop frame (%04x)\n", __func__, rx);
+			netdev_err(mse->netdev, "%s: Drop frame (%04x, %u)\n", __func__, rx, txb->len);
 			mse->netdev->stats.tx_dropped++;
 			goto free_skb;
 		}
