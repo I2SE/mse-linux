@@ -5,15 +5,9 @@
 #ifndef __MSE102X_H__
 #define __MSE102X_H__
 
-union mse102x_tx_hdr {
-	u8	txb[6];
-	__le16	txw[3];
-};
-
 struct mse102x_net {
 	struct net_device	*netdev;
 
-	union mse102x_tx_hdr	txh ____cacheline_aligned;
 	u8			rxd[8];
 	u8			txd[8];
 

@@ -42,24 +42,12 @@ struct mse102x_net_spi {
 #define CMD_RTS		(0x1 << CMD_SHIFT)
 #define CMD_CTR		(0x2 << CMD_SHIFT)
 
+#define CMD_MASK	GENMASK(15, CMD_SHIFT)
 #define LEN_MASK	GENMASK(CMD_SHIFT - 1, 0)
 
 #define	DET_CMD_LEN	4
 #define	DET_SOF_LEN	2
 #define	DET_DFT_LEN	2
-
-/* SPI frame opcodes */
-#define KS_SPIOP_RD	0x00
-#define KS_SPIOP_WR	0x40
-#define KS_SPIOP_RXFIFO	0x80
-#define KS_SPIOP_TXFIFO	0xC0
-
-/* shift for byte-enable data */
-#define BYTE_EN(_x)	((_x) << 2)
-
-/* turn register number and byte-enable mask into data for start of packet */
-#define MK_OP(_byteen, _reg)	\
-	(BYTE_EN(_byteen) | (_reg) << (8 + 2) | (_reg) >> 6)
 
 void mse102x_lock_spi(struct mse102x_net *mse, unsigned long *flags)
 {
@@ -184,75 +172,13 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 	return ret;
 }
 
-static void mse102x_rdreg(struct mse102x_net *mse, unsigned int op,
-			 u8 *rxb, unsigned int rxl)
+static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff, unsigned int len)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-	struct spi_transfer *xfer;
-	struct spi_message *msg;
-	__le16 *txb = (__le16 *)mse->txd;
-	u8 *trx = mse->rxd;
+	struct spi_transfer *xfer = &mses->spi_xfer1;
+	struct spi_message *msg = &mses->spi_msg1;
 	int ret;
 
-	txb[0] = cpu_to_le16(op | KS_SPIOP_RD);
-
-	if (mses->spidev->master->flags & SPI_MASTER_HALF_DUPLEX) {
-		msg = &mses->spi_msg2;
-		xfer = mses->spi_xfer2;
-
-		xfer->tx_buf = txb;
-		xfer->rx_buf = NULL;
-		xfer->len = 2;
-
-		xfer++;
-		xfer->tx_buf = NULL;
-		xfer->rx_buf = trx;
-		xfer->len = rxl;
-	} else {
-		msg = &mses->spi_msg1;
-		xfer = &mses->spi_xfer1;
-
-		xfer->tx_buf = txb;
-		xfer->rx_buf = trx;
-		xfer->len = rxl + 2;
-	}
-
-	ret = spi_sync(mses->spidev, msg);
-	if (ret < 0)
-		netdev_err(mse->netdev, "read: spi_sync() failed\n");
-	else if (mses->spidev->master->flags & SPI_MASTER_HALF_DUPLEX)
-		memcpy(rxb, trx, rxl);
-	else
-		memcpy(rxb, trx + 2, rxl);
-}
-
-static unsigned int mse102x_rdreg16_spi(struct mse102x_net *mse, unsigned int reg)
-{
-	__le16 rx = 0;
-
-	mse102x_rdreg(mse, MK_OP(reg & 2 ? 0xC : 0x3, reg), (u8 *)&rx, 2);
-	return le16_to_cpu(rx);
-}
-
-static void mse102x_rdfifo_spi(struct mse102x_net *mse, u8 *buff, unsigned int len)
-{
-	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-	struct spi_transfer *xfer = mses->spi_xfer2;
-	struct spi_message *msg = &mses->spi_msg2;
-	u8 txb[1];
-	int ret;
-
-	netif_dbg(mse, rx_status, mse->netdev,
-		  "%s: %d@%p\n", __func__, len, buff);
-
-	/* set the operation we're issuing */
-	txb[0] = KS_SPIOP_RXFIFO;
-
-	xfer->tx_buf = txb;
-	xfer->rx_buf = NULL;
-	xfer->len = 1;
-
-	xfer++;
 	xfer->rx_buf = buff;
 	xfer->tx_buf = NULL;
 	xfer->len = len;
@@ -260,6 +186,8 @@ static void mse102x_rdfifo_spi(struct mse102x_net *mse, u8 *buff, unsigned int l
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0)
 		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
+
+	return ret;
 }
 
 static void mse102x_dbg_dumpkkt(struct mse102x_net *mse, u8 *rxpkt)
@@ -275,47 +203,69 @@ void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 {
 	struct sk_buff *skb;
 	unsigned long flags;
-	unsigned rxlen;
-	unsigned rxstat;
+	unsigned int rxalign;
+	unsigned int rxlen;
 	u8 *rxpkt;
+	__be16 rx = 0;
+	u16 cmd_resp;
+	int ret;
 
 	mse102x_lock_spi(mse, &flags);
 
-	rxstat = mse102x_rdreg16_spi(mse, 0);
-	rxlen = mse102x_rdreg16_spi(mse, 0);
+	mse102x_tx_cmd_spi(mse, CMD_CTR);
+	ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
+	cmd_resp = be16_to_cpu(rx);
 
-	netif_dbg(mse, rx_status, mse->netdev,
-		  "rx: stat 0x%04x, len 0x%04x\n", rxstat, rxlen);
+	if (ret || ((cmd_resp & CMD_MASK) != CMD_RTS)) {
+		usleep_range(50, 100);
 
-	if (rxlen > 4) {
-		unsigned int rxalign;
-
-		rxlen -= 4;
-		rxalign = ALIGN(rxlen, 4);
-		skb = netdev_alloc_skb_ip_align(mse->netdev, rxalign);
-		if (skb) {
-
-			/* 4 bytes of status header + 4 bytes of
-			 * garbage: we put them before ethernet
-			 * header, so that they are copied,
-			 * but ignored.
-			 */
-
-			rxpkt = skb_put(skb, rxlen) - 8;
-
-			mse102x_rdfifo_spi(mse, rxpkt, rxalign + 8);
-
-			if (netif_msg_pktdata(mse))
-				mse102x_dbg_dumpkkt(mse, rxpkt);
-
-			skb->protocol = eth_type_trans(skb, mse->netdev);
-			netif_rx_ni(skb);
-
-			mse->netdev->stats.rx_packets++;
-			mse->netdev->stats.rx_bytes += rxlen;
+		mse102x_tx_cmd_spi(mse, CMD_CTR);
+		ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
+		cmd_resp = be16_to_cpu(rx);
+		if (ret) {
+			netdev_err(mse->netdev, "%s: Failed to receive (%d)\n",
+						__func__, ret);
+			goto unlock_spi;
+		} else if ((cmd_resp & CMD_MASK) != CMD_RTS) {
+			netdev_err(mse->netdev, "%s: Unexpected response (0x%04x)\n",
+						__func__, cmd_resp);
+			goto unlock_spi;
+		} else {
+			netdev_warn(mse->netdev, "%s: Unexpected response to first CMD\n",
+						 __func__);
 		}
 	}
 
+	rxlen = cmd_resp & LEN_MASK;
+	if (!rxlen) {
+		netdev_warn(mse->netdev, "%s: No frame length defined\n",
+					 __func__);
+		goto unlock_spi;
+	}
+
+	rxalign = ALIGN(rxlen + DET_SOF_LEN + DET_DFT_LEN, 4);
+	skb = netdev_alloc_skb_ip_align(mse->netdev, rxalign);
+	if (!skb)
+		goto unlock_spi;
+
+	/* 2 bytes Start of frame (before ethernet header)
+	 * 2 bytes Data frame tail (after ethernet frame)
+	 * They are copied, but ignored.
+	 */
+	rxpkt = skb_put(skb, rxlen) - DET_SOF_LEN;
+	mse102x_rx_frame_spi(mse, rxpkt, rxalign);
+
+	if (netif_msg_pktdata(mse))
+		mse102x_dbg_dumpkkt(mse, rxpkt);
+
+	skb->protocol = eth_type_trans(skb, mse->netdev);
+	skb->ip_summed = CHECKSUM_UNNECESSARY;
+	netif_rx_ni(skb);
+
+	mse->netdev->stats.rx_packets++;
+	mse->netdev->stats.rx_bytes += rxlen;
+
+unlock_spi:
 	mse102x_unlock_spi(mse, &flags);
 }
 
