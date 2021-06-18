@@ -111,8 +111,6 @@ static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 	if (ret < 0) {
 		netdev_err(mse->netdev, "read: spi_sync() failed\n");
 	} else if (*cmd != cpu_to_be16(DET_CMD)) {
-		netdev_warn(mse->netdev, "%s: Unexpected response (0x%04x)\n",
-					 __func__, *cmd);
 		ret = -EIO;
 	} else {
 		memcpy(rxb, trx + 2, 2);
@@ -223,23 +221,23 @@ void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 		ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 		cmd_resp = be16_to_cpu(rx);
 		if (ret) {
-			netdev_err(mse->netdev, "%s: Failed to receive (%d)\n",
-						__func__, ret);
+			net_err_ratelimited("%s: Failed to receive (%d)\n",
+					    __func__, ret);
 			goto unlock_spi;
 		} else if ((cmd_resp & CMD_MASK) != CMD_RTS) {
-			netdev_err(mse->netdev, "%s: Unexpected response (0x%04x)\n",
-						__func__, cmd_resp);
+			net_err_ratelimited("%s: Unexpected response (0x%04x)\n",
+					    __func__, cmd_resp);
 			goto unlock_spi;
 		} else {
-			netdev_warn(mse->netdev, "%s: Unexpected response to first CMD\n",
-						 __func__);
+			net_warn_ratelimited("%s: Unexpected response to first CMD\n",
+					     __func__);
 		}
 	}
 
 	rxlen = cmd_resp & LEN_MASK;
 	if (!rxlen) {
-		netdev_warn(mse->netdev, "%s: No frame length defined\n",
-					 __func__);
+		net_warn_ratelimited("%s: No frame length defined\n",
+				     __func__);
 		goto unlock_spi;
 	}
 
@@ -305,23 +303,24 @@ static void mse102x_tx_work(struct work_struct *work)
 		ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 		cmd_resp = be16_to_cpu(rx);
 		if (ret) {
-			netdev_err(mse->netdev, "%s: Failed to receive (%d), drop frame\n",
-						__func__, ret);
+			net_err_ratelimited("%s: Failed to receive (%d), drop frame\n",
+					    __func__, ret);
 			mse->netdev->stats.tx_dropped++;
 			goto free_skb;
 		} else if (cmd_resp != CMD_CTR) {
-			netdev_err(mse->netdev, "%s: Unexpected response (0x%04x), drop frame\n",
-						__func__, cmd_resp);
+			net_err_ratelimited("%s: Unexpected response (0x%04x), drop frame\n",
+					    __func__, cmd_resp);
 			mse->netdev->stats.tx_dropped++;
 			goto free_skb;
 		} else {
-			netdev_warn(mse->netdev, "%s: Unexpected response to first CMD\n",
-						 __func__);
+			net_warn_ratelimited("%s: Unexpected response to first CMD\n",
+					     __func__);
 		}
 	}
 
 	if (mse102x_tx_frame_spi(mse, txb)) {
-		netdev_err(mse->netdev, "%s: Failed to send, drop frame (%u)\n", __func__, txb->len);
+		net_err_ratelimited("%s: Failed to send, drop frame (%u)\n",
+				    __func__, txb->len);
 		mse->netdev->stats.tx_dropped++;
 	} else {
 		mse->netdev->stats.tx_bytes += txb->len;
