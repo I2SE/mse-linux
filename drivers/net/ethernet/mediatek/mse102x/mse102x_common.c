@@ -47,8 +47,7 @@ static int mse102x_net_open(struct net_device *dev)
 	unsigned long flags;
 	int ret;
 
-	ret = request_threaded_irq(dev->irq, NULL, mse102x_irq,
-				   IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+	ret = request_threaded_irq(dev->irq, NULL, mse102x_irq, IRQF_ONESHOT,
 				   dev->name, mse);
 	if (ret < 0) {
 		netdev_err(dev, "failed to get irq\n");
