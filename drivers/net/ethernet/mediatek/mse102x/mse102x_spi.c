@@ -139,7 +139,7 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 
 	if ((skb_headroom(txp) < DET_SOF_LEN) ||
 	    (skb_tailroom(txp) < DET_DFT_LEN + pad_len)) {
-		tskb = skb_copy_expand(txp, DET_SOF_LEN, DET_DFT_LEN + pad_len, GFP_ATOMIC);
+		tskb = skb_copy_expand(txp, DET_SOF_LEN, DET_DFT_LEN + pad_len, GFP_KERNEL);
 		if (!tskb)
 			return -ENOMEM;
 
