@@ -148,18 +148,18 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 	}
 
 	ptmp = skb_push(txp, DET_SOF_LEN);
-	*ptmp = (DET_SOF >> 8) && 0xFF;
+	*ptmp = (DET_SOF >> 8) & 0xFF;
 	ptmp++;
-	*ptmp = DET_SOF && 0xFF;
+	*ptmp = DET_SOF & 0xFF;
 
 	if (pad_len) {
 		ptmp = skb_put_zero(txp, pad_len);
 	}
 
 	ptmp = skb_put(txp, DET_DFT_LEN);
-	*ptmp = (DET_DFT >> 8) && 0xFF;
+	*ptmp = (DET_DFT >> 8) & 0xFF;
 	ptmp++;
-	*ptmp = DET_DFT && 0xFF;
+	*ptmp = DET_DFT & 0xFF;
 
 	xfer->tx_buf = txp->data;
 	xfer->rx_buf = NULL;
