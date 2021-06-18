@@ -143,6 +143,7 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 		txp = tskb;
 	}
 
+	/* TODO handle CPU endianess */
 	ptmp = skb_push(txp, DET_SOF_LEN);
 	*ptmp = (DET_SOF >> 8) & 0xFF;
 	ptmp++;
@@ -182,6 +183,8 @@ static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff, unsigned int 
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0)
 		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
+
+	/* TODO check SOF and DFT */
 
 	return ret;
 }
@@ -287,6 +290,7 @@ static void mse102x_tx_work(struct work_struct *work)
 	if (!txb)
 		goto unlock_spi;
 
+	/* TODO: move padding out of mse102x_tx_frame_spi and place it HERE */
 	pad_len = max_t(unsigned int, txb->len, 60);
 
 	mse102x_tx_cmd_spi(mse, CMD_RTS | pad_len);
@@ -347,8 +351,9 @@ netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 	struct mse102x_net *mse = netdev_priv(dev);
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
-	/* FIXME this needs proper TX flow control */
-
+	/* Since the chip accepts only one packet at once, stop the tx queue
+	 * now and wake it after spi transfer.
+         */
 	netif_stop_queue(dev);
 
 	netif_dbg(mse, tx_queued, mse->netdev,
