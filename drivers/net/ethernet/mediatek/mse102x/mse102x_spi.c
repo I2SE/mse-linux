@@ -26,10 +26,8 @@ struct mse102x_net_spi {
 	struct mutex		lock;
 	struct work_struct	tx_work;
 	struct spi_device	*spidev;
-	struct spi_message	spi_msg1;
-	struct spi_message	spi_msg2;
-	struct spi_transfer	spi_xfer1;
-	struct spi_transfer	spi_xfer2[2];
+	struct spi_message	spi_msg;
+	struct spi_transfer	spi_xfer;
 };
 
 #define to_mse102x_spi(mse) container_of((mse), struct mse102x_net_spi, mse102x)
@@ -73,8 +71,8 @@ void mse102x_unlock_spi(struct mse102x_net *mse, unsigned long *flags)
 static void mse102x_tx_cmd_spi(struct mse102x_net *mse, u16 cmd)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-	struct spi_transfer *xfer = &mses->spi_xfer1;
-	struct spi_message *msg = &mses->spi_msg1;
+	struct spi_transfer *xfer = &mses->spi_xfer;
+	struct spi_message *msg = &mses->spi_msg;
 	__be16 txb[2];
 	int ret;
 
@@ -93,8 +91,8 @@ static void mse102x_tx_cmd_spi(struct mse102x_net *mse, u16 cmd)
 static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-	struct spi_transfer *xfer = &mses->spi_xfer1;
-	struct spi_message *msg = &mses->spi_msg1;
+	struct spi_transfer *xfer = &mses->spi_xfer;
+	struct spi_message *msg = &mses->spi_msg;
 	__be16 *txb = (__be16 *)mse->txd;
 	__be16 *cmd = (__be16 *)mse->rxd;
 	u8 *trx = mse->rxd;
@@ -122,8 +120,8 @@ static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-	struct spi_transfer *xfer = &mses->spi_xfer1;
-	struct spi_message *msg = &mses->spi_msg1;
+	struct spi_transfer *xfer = &mses->spi_xfer;
+	struct spi_message *msg = &mses->spi_msg;
 	struct sk_buff *tskb;
 	u8 pad_len = 0;
 	u8 *ptmp;
@@ -173,8 +171,8 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff, unsigned int len)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-	struct spi_transfer *xfer = &mses->spi_xfer1;
-	struct spi_message *msg = &mses->spi_msg1;
+	struct spi_transfer *xfer = &mses->spi_xfer;
+	struct spi_message *msg = &mses->spi_msg;
 	int ret;
 
 	xfer->rx_buf = buff;
@@ -398,12 +396,8 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	INIT_WORK(&mses->tx_work, mse102x_tx_work);
 
 	/* initialise pre-made spi transfer messages */
-	spi_message_init(&mses->spi_msg1);
-	spi_message_add_tail(&mses->spi_xfer1, &mses->spi_msg1);
-
-	spi_message_init(&mses->spi_msg2);
-	spi_message_add_tail(&mses->spi_xfer2[0], &mses->spi_msg2);
-	spi_message_add_tail(&mses->spi_xfer2[1], &mses->spi_msg2);
+	spi_message_init(&mses->spi_msg);
+	spi_message_add_tail(&mses->spi_xfer, &mses->spi_msg);
 
 	netdev->irq = spi->irq;
 
