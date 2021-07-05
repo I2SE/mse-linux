@@ -169,22 +169,31 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 	return ret;
 }
 
-static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff, unsigned int len)
+static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff, unsigned int frame_len)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	struct spi_transfer *xfer = &mses->spi_xfer;
 	struct spi_message *msg = &mses->spi_msg;
+	__be16 *sof = (__be16 *)buff;
+	__be16 *dft = (__be16 *)(buff + DET_SOF_LEN + frame_len);
 	int ret;
 
 	xfer->rx_buf = buff;
 	xfer->tx_buf = NULL;
-	xfer->len = len;
+	xfer->len = DET_SOF_LEN + frame_len + DET_DFT_LEN;
 
 	ret = spi_sync(mses->spidev, msg);
-	if (ret < 0)
+	if (ret < 0) {
 		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
-
-	/* TODO check SOF and DFT */
+	} else if (*sof != cpu_to_be16(DET_SOF)) {
+		netdev_err(mse->netdev, "%s: SPI start of frame is invalid (0x%04x)\n",
+					__func__, *sof);
+		ret = -EIO;
+	} else if (*dft != cpu_to_be16(DET_DFT)) {
+		netdev_err(mse->netdev, "%s: SPI frame tail is invalid (0x%04x)\n",
+					__func__, *dft);
+		ret = -EIO;
+	}
 
 	return ret;
 }
@@ -252,7 +261,11 @@ void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 	 * They are copied, but ignored.
 	 */
 	rxpkt = skb_put(skb, rxlen) - DET_SOF_LEN;
-	mse102x_rx_frame_spi(mse, rxpkt, rxalign);
+	if (mse102x_rx_frame_spi(mse, rxpkt, rxlen)) {
+		mse->netdev->stats.rx_errors++;
+		dev_kfree_skb(skb);
+		goto unlock_spi;
+	}
 
 	if (netif_msg_pktdata(mse))
 		mse102x_dbg_dumpkkt(mse, rxpkt);
