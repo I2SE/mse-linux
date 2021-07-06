@@ -523,8 +523,7 @@ int mse102x_resume(struct device *dev)
 }
 #endif
 
-static __maybe_unused SIMPLE_DEV_PM_OPS(mse102x_pm_ops,
-					mse102x_suspend, mse102x_resume);
+static SIMPLE_DEV_PM_OPS(mse102x_pm_ops, mse102x_suspend, mse102x_resume);
 
 static int mse102x_probe_spi(struct spi_device *spi)
 {
