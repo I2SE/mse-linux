@@ -57,20 +57,6 @@ static int msg_enable;
 module_param_named(message, msg_enable, int, 0);
 MODULE_PARM_DESC(message, "Message verbosity level (0=none, 31=all)");
 
-void mse102x_lock_spi(struct mse102x_net *mse, unsigned long *flags)
-{
-	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-
-	mutex_lock(&mses->lock);
-}
-
-void mse102x_unlock_spi(struct mse102x_net *mse, unsigned long *flags)
-{
-	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-
-	mutex_unlock(&mses->lock);
-}
-
 /* SPI register read/write calls.
  *
  * All these calls issue SPI transactions to access the chip's registers. They
@@ -215,8 +201,8 @@ static void mse102x_dump_packet(const char *msg, int len, const char *data)
 
 void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 {
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	struct sk_buff *skb;
-	unsigned long flags;
 	unsigned int rxalign;
 	unsigned int rxlen;
 	u8 *rxpkt;
@@ -224,7 +210,7 @@ void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 	u16 cmd_resp;
 	int ret;
 
-	mse102x_lock_spi(mse, &flags);
+	mutex_lock(&mses->lock);
 
 	mse102x_tx_cmd_spi(mse, CMD_CTR);
 	ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
@@ -284,7 +270,7 @@ void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 	mse->netdev->stats.rx_bytes += rxlen;
 
 unlock_spi:
-	mse102x_unlock_spi(mse, &flags);
+	mutex_unlock(&mses->lock);
 }
 
 static void mse102x_tx_work(struct work_struct *work)
@@ -292,7 +278,6 @@ static void mse102x_tx_work(struct work_struct *work)
 	struct mse102x_net_spi *mses;
 	struct mse102x_net *mse;
 	struct device *dev;
-	unsigned long flags;
 	struct sk_buff *txb;
 	unsigned int pad_len;
 	__be16 rx = 0;
@@ -303,7 +288,7 @@ static void mse102x_tx_work(struct work_struct *work)
 	mse = &mses->mse102x;
 	dev = &mses->spidev->dev;
 
-	mse102x_lock_spi(mse, &flags);
+	mutex_lock(&mses->lock);
 
 	txb = skb_dequeue(&mse->txq);
 	if (!txb)
@@ -352,16 +337,9 @@ free_skb:
 	dev_kfree_skb(txb);
 
 unlock_spi:
-	mse102x_unlock_spi(mse, &flags);
+	mutex_unlock(&mses->lock);
 
 	netif_wake_queue(mse->netdev);
-}
-
-void mse102x_flush_tx_work_spi(struct mse102x_net *mse)
-{
-	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-
-	flush_work(&mses->tx_work);
 }
 
 netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
@@ -412,7 +390,7 @@ static irqreturn_t mse102x_irq(int irq, void *_mse)
 static int mse102x_net_open(struct net_device *dev)
 {
 	struct mse102x_net *mse = netdev_priv(dev);
-	unsigned long flags;
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	int ret;
 
 	ret = request_threaded_irq(dev->irq, NULL, mse102x_irq, IRQF_ONESHOT,
@@ -425,7 +403,7 @@ static int mse102x_net_open(struct net_device *dev)
 	/* lock the card, even if we may not actually be doing anything
 	 * else at the moment
 	 */
-	mse102x_lock_spi(mse, &flags);
+	mutex_lock(&mses->lock);
 
 	netif_dbg(mse, ifup, mse->netdev, "opening\n");
 
@@ -435,7 +413,7 @@ static int mse102x_net_open(struct net_device *dev)
 
 	netif_dbg(mse, ifup, mse->netdev, "network device up\n");
 
-	mse102x_unlock_spi(mse, &flags);
+	mutex_unlock(&mses->lock);
 
 	return 0;
 }
@@ -443,13 +421,14 @@ static int mse102x_net_open(struct net_device *dev)
 static int mse102x_net_stop(struct net_device *dev)
 {
 	struct mse102x_net *mse = netdev_priv(dev);
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
 	netif_info(mse, ifdown, dev, "shutting down\n");
 
 	netif_stop_queue(dev);
 
 	/* stop any outstanding work */
-	mse102x_flush_tx_work_spi(mse);
+	flush_work(&mses->tx_work);
 
 	/* ensure any queued tx buffers are dumped */
 	while (!skb_queue_empty(&mse->txq)) {
@@ -539,45 +518,6 @@ int mse102x_resume(struct device *dev)
 static __maybe_unused SIMPLE_DEV_PM_OPS(mse102x_pm_ops,
 					mse102x_suspend, mse102x_resume);
 
-int mse102x_probe_common(struct net_device *netdev, struct device *dev,
-			 int msg_en)
-{
-	struct mse102x_net *mse = netdev_priv(netdev);
-	int ret;
-
-	mse->netdev = netdev;
-
-	dev_info(dev, "message enable is %d\n", msg_en);
-
-	/* set the default message enable */
-	mse->msg_enable = netif_msg_init(msg_en, NETIF_MSG_DRV |
-						NETIF_MSG_PROBE |
-						NETIF_MSG_LINK);
-
-	skb_queue_head_init(&mse->txq);
-
-	netdev->ethtool_ops = &mse102x_ethtool_ops;
-	SET_NETDEV_DEV(netdev, dev);
-
-	dev_set_drvdata(dev, mse);
-
-	netif_carrier_off(mse->netdev);
-	netdev->if_port = IF_PORT_100BASET;
-	netdev->netdev_ops = &mse102x_netdev_ops;
-
-	mse102x_init_mac(mse, dev->of_node);
-
-	ret = register_netdev(netdev);
-	if (ret) {
-		dev_err(dev, "failed to register network device: %d\n", ret);
-		return ret;
-	}
-
-	dev_info(dev, "%s: Success\n", __func__);
-
-	return 0;
-}
-
 static int mse102x_probe_spi(struct spi_device *spi)
 {
 	struct device *dev = &spi->dev;
@@ -617,25 +557,48 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	spi_message_add_tail(&mses->spi_xfer, &mses->spi_msg);
 
 	netdev->irq = spi->irq;
+	mse->netdev = netdev;
 
-	return mse102x_probe_common(netdev, dev, msg_enable);
-}
+	dev_info(dev, "message enable is %d\n", msg_enable);
 
-int mse102x_remove_common(struct device *dev)
-{
-	struct mse102x_net *priv = dev_get_drvdata(dev);
+	/* set the default message enable */
+	mse->msg_enable = netif_msg_init(msg_enable, NETIF_MSG_DRV |
+					 NETIF_MSG_PROBE | NETIF_MSG_LINK);
 
-	if (netif_msg_drv(priv))
-		dev_info(dev, "remove\n");
+	skb_queue_head_init(&mse->txq);
 
-	unregister_netdev(priv->netdev);
+	netdev->ethtool_ops = &mse102x_ethtool_ops;
+	SET_NETDEV_DEV(netdev, dev);
+
+	dev_set_drvdata(dev, mse);
+
+	netif_carrier_off(mse->netdev);
+	netdev->if_port = IF_PORT_100BASET;
+	netdev->netdev_ops = &mse102x_netdev_ops;
+
+	mse102x_init_mac(mse, dev->of_node);
+
+	ret = register_netdev(netdev);
+	if (ret) {
+		dev_err(dev, "failed to register network device: %d\n", ret);
+		return ret;
+	}
+
+	dev_info(dev, "%s: Success\n", __func__);
 
 	return 0;
 }
 
 static int mse102x_remove_spi(struct spi_device *spi)
 {
-	return mse102x_remove_common(&spi->dev);
+	struct mse102x_net *priv = dev_get_drvdata(&spi->dev);
+
+	if (netif_msg_drv(priv))
+		dev_info(&spi->dev, "remove\n");
+
+	unregister_netdev(priv->netdev);
+
+	return 0;
 }
 
 static const struct of_device_id mse102x_match_table[] = {
