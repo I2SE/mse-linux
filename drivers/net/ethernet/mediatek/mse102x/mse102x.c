@@ -37,7 +37,6 @@ struct mse102x_net {
 	u8			txd[8];
 
 	u32			msg_enable ____cacheline_aligned;
-	u8			fid;
 
 	struct sk_buff_head	txq;
 };
