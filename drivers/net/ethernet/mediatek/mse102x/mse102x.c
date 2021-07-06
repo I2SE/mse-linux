@@ -76,7 +76,7 @@ static void mse102x_tx_cmd_spi(struct mse102x_net *mse, u16 cmd)
 
 	xfer->tx_buf = txb;
 	xfer->rx_buf = NULL;
-	xfer->len = 4;
+	xfer->len = DET_CMD_LEN;
 
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0)
@@ -98,7 +98,7 @@ static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 
 	xfer->tx_buf = txb;
 	xfer->rx_buf = trx;
-	xfer->len = 4;
+	xfer->len = DET_CMD_LEN;
 
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0)
