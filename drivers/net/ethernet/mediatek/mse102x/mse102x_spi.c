@@ -198,13 +198,11 @@ static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff, unsigned int 
 	return ret;
 }
 
-static void mse102x_dbg_dumpkkt(struct mse102x_net *mse, u8 *rxpkt)
+static void mse102x_dump_packet(const char *msg, int len, const char *data)
 {
-	netdev_dbg(mse->netdev,
-		   "pkt %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x\n",
-		   rxpkt[4], rxpkt[5], rxpkt[6], rxpkt[7],
-		   rxpkt[8], rxpkt[9], rxpkt[10], rxpkt[11],
-		   rxpkt[12], rxpkt[13], rxpkt[14], rxpkt[15]);
+	printk(KERN_DEBUG ": %s - packet len:%d\n", msg, len);
+	print_hex_dump(KERN_DEBUG, "pk data: ", DUMP_PREFIX_OFFSET, 16, 1,
+			data, len, true);
 }
 
 void mse102x_rx_pkts_spi(struct mse102x_net *mse)
@@ -268,7 +266,7 @@ void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 	}
 
 	if (netif_msg_pktdata(mse))
-		mse102x_dbg_dumpkkt(mse, rxpkt);
+		mse102x_dump_packet(__func__, skb->len, skb->data);
 
 	skb->protocol = eth_type_trans(skb, mse->netdev);
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
