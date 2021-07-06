@@ -208,7 +208,7 @@ static void mse102x_dump_packet(const char *msg, int len, const char *data)
 		       data, len, true);
 }
 
-void mse102x_rx_pkts_spi(struct mse102x_net *mse)
+static void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	struct sk_buff *skb;
@@ -351,8 +351,8 @@ unlock_spi:
 	netif_wake_queue(mse->netdev);
 }
 
-netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
-				   struct net_device *dev)
+static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
+					  struct net_device *dev)
 {
 	struct mse102x_net *mse = netdev_priv(dev);
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
@@ -496,7 +496,7 @@ static const struct ethtool_ops mse102x_ethtool_ops = {
 
 #ifdef CONFIG_PM_SLEEP
 
-int mse102x_suspend(struct device *dev)
+static int mse102x_suspend(struct device *dev)
 {
 	struct mse102x_net *mse = dev_get_drvdata(dev);
 	struct net_device *netdev = mse->netdev;
@@ -509,7 +509,7 @@ int mse102x_suspend(struct device *dev)
 	return 0;
 }
 
-int mse102x_resume(struct device *dev)
+static int mse102x_resume(struct device *dev)
 {
 	struct mse102x_net *mse = dev_get_drvdata(dev);
 	struct net_device *netdev = mse->netdev;
