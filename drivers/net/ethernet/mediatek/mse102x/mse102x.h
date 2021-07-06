@@ -18,7 +18,7 @@ struct mse102x_net {
 };
 
 int mse102x_probe_common(struct net_device *netdev, struct device *dev,
-			int msg_en);
+			 int msg_en);
 int mse102x_remove_common(struct device *dev);
 int mse102x_suspend(struct device *dev);
 int mse102x_resume(struct device *dev);

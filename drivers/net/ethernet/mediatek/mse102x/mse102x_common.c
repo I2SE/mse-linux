@@ -55,7 +55,8 @@ static int mse102x_net_open(struct net_device *dev)
 	}
 
 	/* lock the card, even if we may not actually be doing anything
-	 * else at the moment */
+	 * else at the moment
+	 */
 	mse102x_lock_spi(mse, &flags);
 
 	netif_dbg(mse, ifup, mse->netdev, "opening\n");
@@ -108,7 +109,7 @@ static const struct net_device_ops mse102x_netdev_ops = {
 /* ethtool support */
 
 static void mse102x_get_drvinfo(struct net_device *dev,
-			       struct ethtool_drvinfo *di)
+				struct ethtool_drvinfo *di)
 {
 	strlcpy(di->driver, "mse102x", sizeof(di->driver));
 	strlcpy(di->version, "1.00", sizeof(di->version));
@@ -118,12 +119,14 @@ static void mse102x_get_drvinfo(struct net_device *dev,
 static u32 mse102x_get_msglevel(struct net_device *dev)
 {
 	struct mse102x_net *mse = netdev_priv(dev);
+
 	return mse->msg_enable;
 }
 
 static void mse102x_set_msglevel(struct net_device *dev, u32 to)
 {
 	struct mse102x_net *mse = netdev_priv(dev);
+
 	mse->msg_enable = to;
 }
 
@@ -166,7 +169,7 @@ int mse102x_resume(struct device *dev)
 #endif
 
 int mse102x_probe_common(struct net_device *netdev, struct device *dev,
-			int msg_en)
+			 int msg_en)
 {
 	struct mse102x_net *mse = netdev_priv(netdev);
 	int ret;

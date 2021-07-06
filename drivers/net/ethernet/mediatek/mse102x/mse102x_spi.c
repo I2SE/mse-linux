@@ -23,7 +23,7 @@ static int msg_enable;
 
 struct mse102x_net_spi {
 	struct mse102x_net	mse102x;
-	struct mutex		lock;
+	struct mutex		lock;		/* Protect SPI frame transfer */
 	struct work_struct	tx_work;
 	struct spi_device	*spidev;
 	struct spi_message	spi_msg;
@@ -106,13 +106,12 @@ static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 	xfer->len = 4;
 
 	ret = spi_sync(mses->spidev, msg);
-	if (ret < 0) {
+	if (ret < 0)
 		netdev_err(mse->netdev, "read: spi_sync() failed\n");
-	} else if (*cmd != cpu_to_be16(DET_CMD)) {
+	else if (*cmd != cpu_to_be16(DET_CMD))
 		ret = -EIO;
-	} else {
+	else
 		memcpy(rxb, trx + 2, 2);
-	}
 
 	return ret;
 }
@@ -149,9 +148,8 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 	ptmp++;
 	*ptmp = DET_SOF & 0xFF;
 
-	if (pad_len) {
+	if (pad_len)
 		ptmp = skb_put_zero(txp, pad_len);
-	}
 
 	ptmp = skb_put(txp, DET_DFT_LEN);
 	*ptmp = (DET_DFT >> 8) & 0xFF;
@@ -187,11 +185,11 @@ static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff, unsigned int 
 		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
 	} else if (*sof != cpu_to_be16(DET_SOF)) {
 		netdev_err(mse->netdev, "%s: SPI start of frame is invalid (0x%04x)\n",
-					__func__, *sof);
+			   __func__, *sof);
 		ret = -EIO;
 	} else if (*dft != cpu_to_be16(DET_DFT)) {
 		netdev_err(mse->netdev, "%s: SPI frame tail is invalid (0x%04x)\n",
-					__func__, *dft);
+			   __func__, *dft);
 		ret = -EIO;
 	}
 
@@ -202,7 +200,7 @@ static void mse102x_dump_packet(const char *msg, int len, const char *data)
 {
 	printk(KERN_DEBUG ": %s - packet len:%d\n", msg, len);
 	print_hex_dump(KERN_DEBUG, "pk data: ", DUMP_PREFIX_OFFSET, 16, 1,
-			data, len, true);
+		       data, len, true);
 }
 
 void mse102x_rx_pkts_spi(struct mse102x_net *mse)
@@ -308,7 +306,7 @@ static void mse102x_tx_work(struct work_struct *work)
 	ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 	cmd_resp = be16_to_cpu(rx);
 
-	if (ret || (cmd_resp != CMD_CTR)) {
+	if (ret || cmd_resp != CMD_CTR) {
 		usleep_range(50, 100);
 
 		/* Retransmit CMD_RTS */
@@ -364,7 +362,7 @@ netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 
 	/* Since the chip accepts only one packet at once, stop the tx queue
 	 * now and wake it after spi transfer.
-         */
+	 */
 	netif_stop_queue(dev);
 
 	netif_dbg(mse, tx_queued, mse->netdev,
