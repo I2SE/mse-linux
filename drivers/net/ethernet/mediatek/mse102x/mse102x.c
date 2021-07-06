@@ -372,7 +372,6 @@ netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 	return NETDEV_TX_OK;
 }
 
-
 static void mse102x_init_mac(struct mse102x_net *mse, struct device_node *np)
 {
 	struct net_device *dev = mse->netdev;
