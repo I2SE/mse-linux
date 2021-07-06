@@ -111,6 +111,22 @@ static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 	return ret;
 }
 
+static void mse102x_create_header(u8 *buf)
+{
+	__be16 sof = cpu_to_be16(DET_SOF);
+
+	buf[0] = sof & 0xFF;
+	buf[1] = (sof >> 8) & 0xFF;
+}
+
+static void mse102x_create_footer(u8 *buf)
+{
+	__be16 dft = cpu_to_be16(DET_DFT);
+
+	buf[0] = dft & 0xFF;
+	buf[1] = (dft >> 8) & 0xFF;
+}
+
 static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp,
 				unsigned int pad)
 {
@@ -135,19 +151,14 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp,
 		txp = tskb;
 	}
 
-	/* TODO handle CPU endianess */
 	ptmp = skb_push(txp, DET_SOF_LEN);
-	*ptmp = (DET_SOF >> 8) & 0xFF;
-	ptmp++;
-	*ptmp = DET_SOF & 0xFF;
+	mse102x_create_header(ptmp);
 
 	if (pad)
 		ptmp = skb_put_zero(txp, pad);
 
 	ptmp = skb_put(txp, DET_DFT_LEN);
-	*ptmp = (DET_DFT >> 8) & 0xFF;
-	ptmp++;
-	*ptmp = DET_DFT & 0xFF;
+	mse102x_create_footer(ptmp);
 
 	xfer->tx_buf = txp->data;
 	xfer->rx_buf = NULL;
