@@ -111,25 +111,23 @@ static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 	return ret;
 }
 
-static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
+static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp,
+				unsigned int pad)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	struct spi_transfer *xfer = &mses->spi_xfer;
 	struct spi_message *msg = &mses->spi_msg;
 	struct sk_buff *tskb;
-	u8 pad_len = 0;
 	u8 *ptmp;
 	int ret;
 
 	netif_dbg(mse, tx_queued, mse->netdev, "%s: skb %p, %d@%p\n",
 		  __func__, txp, txp->len, txp->data);
 
-	if (txp->len < 60)
-		pad_len = 60 - txp->len;
-
 	if ((skb_headroom(txp) < DET_SOF_LEN) ||
-	    (skb_tailroom(txp) < DET_DFT_LEN + pad_len)) {
-		tskb = skb_copy_expand(txp, DET_SOF_LEN, DET_DFT_LEN + pad_len, GFP_KERNEL);
+	    (skb_tailroom(txp) < DET_DFT_LEN + pad)) {
+		tskb = skb_copy_expand(txp, DET_SOF_LEN, DET_DFT_LEN + pad,
+				       GFP_KERNEL);
 		if (!tskb)
 			return -ENOMEM;
 
@@ -143,8 +141,8 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 	ptmp++;
 	*ptmp = DET_SOF & 0xFF;
 
-	if (pad_len)
-		ptmp = skb_put_zero(txp, pad_len);
+	if (pad)
+		ptmp = skb_put_zero(txp, pad);
 
 	ptmp = skb_put(txp, DET_DFT_LEN);
 	*ptmp = (DET_DFT >> 8) & 0xFF;
@@ -162,7 +160,8 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp)
 	return ret;
 }
 
-static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff, unsigned int frame_len)
+static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff,
+				unsigned int frame_len)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	struct spi_transfer *xfer = &mses->spi_xfer;
@@ -278,7 +277,7 @@ static void mse102x_tx_work(struct work_struct *work)
 	struct mse102x_net *mse;
 	struct device *dev;
 	struct sk_buff *txb;
-	unsigned int pad_len;
+	unsigned int pad = 0;
 	__be16 rx = 0;
 	u16 cmd_resp;
 	int ret;
@@ -293,10 +292,10 @@ static void mse102x_tx_work(struct work_struct *work)
 	if (!txb)
 		goto unlock_spi;
 
-	/* TODO: move padding out of mse102x_tx_frame_spi and place it HERE */
-	pad_len = max_t(unsigned int, txb->len, 60);
+	if (txb->len < 60)
+		pad = 60 - txb->len;
 
-	mse102x_tx_cmd_spi(mse, CMD_RTS | pad_len);
+	mse102x_tx_cmd_spi(mse, CMD_RTS | (txb->len + pad));
 	ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 	cmd_resp = be16_to_cpu(rx);
 
@@ -304,7 +303,7 @@ static void mse102x_tx_work(struct work_struct *work)
 		usleep_range(50, 100);
 
 		/* Retransmit CMD_RTS */
-		mse102x_tx_cmd_spi(mse, CMD_RTS | pad_len);
+		mse102x_tx_cmd_spi(mse, CMD_RTS | (txb->len + pad));
 		ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 		cmd_resp = be16_to_cpu(rx);
 		if (ret) {
@@ -323,7 +322,7 @@ static void mse102x_tx_work(struct work_struct *work)
 		}
 	}
 
-	if (mse102x_tx_frame_spi(mse, txb)) {
+	if (mse102x_tx_frame_spi(mse, txb, pad)) {
 		net_err_ratelimited("%s: Failed to send, drop frame (%u)\n",
 				    __func__, txb->len);
 		mse->netdev->stats.tx_dropped++;
