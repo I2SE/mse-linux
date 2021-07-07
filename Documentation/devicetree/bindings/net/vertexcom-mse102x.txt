@@ -1,13 +1,13 @@
-* Mediatek MSE102x (SPI)
+* Vertexcom MSE102x (SPI)
 
-Mediatek's MSE102x are a family is HomePlug GreenPHY chips.
+Vertexcom's MSE102x are a family is HomePlug GreenPHY chips.
 They can be connected either via RGMII, RMII or SPI to a host CPU.
 
 In order to use a MSE102x chip as SPI device, it must be defined as
 a child of an SPI master device in the device tree.
 
 Required properties:
-- compatible	    : Should be "mediatek,mse1021" or "mediatek,mse1022"
+- compatible	    : Should be "vertexcom,mse1021" or "vertexcom,mse1022"
 - reg		    : Should specify the SPI chip select
 - interrupts	    : The first cell should specify the index of the source
 		      interrupt and the second cell should specify the trigger
@@ -31,7 +31,7 @@ Example:
 	#size-cells = <0>;
 
 	mse1021: ethernet@0 {
-		compatible = "mediatek,mse1021";
+		compatible = "vertexcom,mse1021";
 		reg = <0>;
 		interrupt-parent = <&gpio>;
 		interrupts = <23 0x1>;		/* rising edge */
