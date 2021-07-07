@@ -214,9 +214,9 @@ static void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 	struct sk_buff *skb;
 	unsigned int rxalign;
 	unsigned int rxlen;
-	u8 *rxpkt;
 	__be16 rx = 0;
 	u16 cmd_resp;
+	u8 *rxpkt;
 	int ret;
 
 	mutex_lock(&mses->lock);

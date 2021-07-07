@@ -1,8 +1,0 @@
-# SPDX-License-Identifier: GPL-2.0-only
-#
-
-config MSE102X
-	tristate "Mediatek MSE102x SPI"
-	depends on SPI
-	help
-	  SPI driver for Mediatek MSE102x SPI attached network chip.
