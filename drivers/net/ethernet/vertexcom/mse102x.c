@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright 2021 in-tech smart charging GmbH
+/* Copyright (C) 2021 in-tech smart charging GmbH
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -626,7 +626,7 @@ static struct spi_driver mse102x_driver = {
 };
 module_spi_driver(mse102x_driver);
 
-MODULE_DESCRIPTION("MSE102X Network driver");
+MODULE_DESCRIPTION("MSE102x Network driver");
 MODULE_AUTHOR("Stefan Wahren <stefan.wahren@in-tech.com>");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("spi:mse102x");
