@@ -15,6 +15,8 @@
 #include <linux/spi/spi.h>
 #include <linux/of_net.h>
 
+#define DRV_NAME	"mse102x"
+
 #define DET_CMD		0x0001
 #define DET_SOF		0x0002
 #define DET_DFT		0x55AA
@@ -466,7 +468,7 @@ static const struct net_device_ops mse102x_netdev_ops = {
 static void mse102x_get_drvinfo(struct net_device *dev,
 				struct ethtool_drvinfo *di)
 {
-	strlcpy(di->driver, "mse102x", sizeof(di->driver));
+	strlcpy(di->driver, DRV_NAME, sizeof(di->driver));
 	strlcpy(di->version, "1.00", sizeof(di->version));
 	strlcpy(di->bus_info, dev_name(dev->dev.parent), sizeof(di->bus_info));
 }
@@ -617,7 +619,7 @@ MODULE_DEVICE_TABLE(of, mse102x_match_table);
 
 static struct spi_driver mse102x_driver = {
 	.driver = {
-		.name = "mse102x",
+		.name = DRV_NAME,
 		.of_match_table = mse102x_match_table,
 		.pm = &mse102x_pm_ops,
 	},
@@ -629,4 +631,4 @@ module_spi_driver(mse102x_driver);
 MODULE_DESCRIPTION("MSE102x Network driver");
 MODULE_AUTHOR("Stefan Wahren <stefan.wahren@in-tech.com>");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("spi:mse102x");
+MODULE_ALIAS("spi:" DRV_NAME);
