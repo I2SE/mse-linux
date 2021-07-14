@@ -550,10 +550,6 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	netdev->priv_flags &= ~IFF_TX_SKB_SHARING;
 	netdev->tx_queue_len = 100;
 
-	dev_info(dev, "max_speed_hz=%d, half_duplex=%d\n",
-		 spi->max_speed_hz,
-		 (spi->master->flags & SPI_MASTER_HALF_DUPLEX) ? 1 : 0);
-
 	mse = netdev_priv(netdev);
 	mses = to_mse102x_spi(mse);
 
@@ -567,8 +563,6 @@ static int mse102x_probe_spi(struct spi_device *spi)
 
 	netdev->irq = spi->irq;
 	mse->netdev = netdev;
-
-	dev_info(dev, "message enable is %d\n", msg_enable);
 
 	/* set the default message enable */
 	mse->msg_enable = netif_msg_init(msg_enable, NETIF_MSG_DRV |
@@ -592,8 +586,6 @@ static int mse102x_probe_spi(struct spi_device *spi)
 		dev_err(dev, "failed to register network device: %d\n", ret);
 		return ret;
 	}
-
-	dev_info(dev, "%s: Success\n", __func__);
 
 	return 0;
 }
