@@ -274,7 +274,6 @@ static void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 		mse102x_dump_packet(__func__, skb->len, skb->data);
 
 	skb->protocol = eth_type_trans(skb, mse->netdev);
-	skb->ip_summed = CHECKSUM_UNNECESSARY;
 	netif_rx_ni(skb);
 
 	mse->netdev->stats.rx_packets++;
