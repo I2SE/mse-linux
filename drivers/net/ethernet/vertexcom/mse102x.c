@@ -32,6 +32,9 @@
 #define	DET_SOF_LEN	2
 #define	DET_DFT_LEN	2
 
+#define MIN_FREQ_HZ	6000000
+#define MAX_FREQ_HZ	7142857
+
 struct mse102x_net {
 	struct net_device	*netdev;
 
@@ -536,6 +539,18 @@ static int mse102x_probe_spi(struct spi_device *spi)
 
 	spi->bits_per_word = 8;
 	spi->mode |= SPI_MODE_3;
+	spi->master->min_speed_hz = MIN_FREQ_HZ; // enforce minimum speed for device
+
+	if (!spi->max_speed_hz)
+		spi->max_speed_hz = MAX_FREQ_HZ;
+
+	if ((spi->max_speed_hz < MIN_FREQ_HZ) ||
+	    (spi->max_speed_hz > MAX_FREQ_HZ)) {
+		dev_err(&spi->dev, "SPI max frequency out of range (min: %u, max: %u)\n",
+			MIN_FREQ_HZ, MAX_FREQ_HZ);
+		return -EINVAL;
+	}
+
 	ret = spi_setup(spi);
 	if (ret < 0) {
 		dev_err(&spi->dev, "Unable to setup SPI device: %d\n", ret);

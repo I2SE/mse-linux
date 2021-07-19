@@ -17,11 +17,9 @@ Required properties:
 
 Optional properties:
 - spi-max-frequency : Maximum frequency of the SPI bus when accessing the chip.
-		      Must be in the range 1000000 to 7142857 (in Hertz).
+		      Must be in the range 6000000 to 7142857 (in Hertz).
 		      If this property is missing, the driver will use the
-		      above mentioned maximum value. To achieve the maximum
-		      GreenPHY data rate, the SPI clock should not be lower
-		      than 6000000 Hz.
+		      above mentioned maximum value.
 - local-mac-address : See ethernet.txt in the same directory.
 
 Example:
