@@ -535,7 +535,7 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	int ret;
 
 	spi->bits_per_word = 8;
-	spi->mode = SPI_MODE_3;
+	spi->mode |= SPI_MODE_3;
 	ret = spi_setup(spi);
 	if (ret < 0) {
 		dev_err(&spi->dev, "Unable to setup SPI device: %d\n", ret);
