@@ -1,6 +1,6 @@
 * Vertexcom MSE102x (SPI)
 
-Vertexcom's MSE102x are a family is HomePlug GreenPHY chips.
+Vertexcom's MSE102x are a family of HomePlug GreenPHY chips.
 They can be connected either via RGMII, RMII or SPI to a host CPU.
 
 In order to use a MSE102x chip as SPI device, it must be defined as
