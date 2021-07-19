@@ -35,6 +35,26 @@
 #define MIN_FREQ_HZ	6000000
 #define MAX_FREQ_HZ	7142857
 
+struct mse102x_stats {
+	u64 xfer_err;
+	u64 invalid_cmd;
+	u64 invalid_ctr;
+	u64 invalid_dft;
+	u64 invalid_len;
+	u64 invalid_rts;
+	u64 invalid_sof;
+};
+
+static const char mse102x_gstrings_stats[][ETH_GSTRING_LEN] = {
+	"SPI transfer errors",
+	"Invalid command",
+	"Invalid CTR",
+	"Invalid DFT",
+	"Invalid frame length",
+	"Invalid RTS",
+	"Invalid SOF",
+};
+
 struct mse102x_net {
 	struct net_device	*netdev;
 
@@ -44,6 +64,7 @@ struct mse102x_net {
 	u32			msg_enable ____cacheline_aligned;
 
 	struct sk_buff_head	txq;
+	struct mse102x_stats	stats;
 };
 
 struct mse102x_net_spi {
@@ -84,8 +105,11 @@ static void mse102x_tx_cmd_spi(struct mse102x_net *mse, u16 cmd)
 	xfer->len = DET_CMD_LEN;
 
 	ret = spi_sync(mses->spidev, msg);
-	if (ret < 0)
-		netdev_err(mse->netdev, "spi_sync() failed\n");
+	if (ret < 0) {
+		netdev_err(mse->netdev, "%s: spi_sync() failed: %d\n",
+			   __func__, ret);
+		mse->stats.xfer_err++;
+	}
 }
 
 static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
@@ -106,12 +130,16 @@ static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 	xfer->len = DET_CMD_LEN;
 
 	ret = spi_sync(mses->spidev, msg);
-	if (ret < 0)
-		netdev_err(mse->netdev, "read: spi_sync() failed\n");
-	else if (*cmd != cpu_to_be16(DET_CMD))
+	if (ret < 0) {
+		netdev_err(mse->netdev, "%s: spi_sync() failed: %d\n",
+			   __func__, ret);
+		mse->stats.xfer_err++;
+	} else if (*cmd != cpu_to_be16(DET_CMD)) {
+		mse->stats.invalid_cmd++;
 		ret = -EIO;
-	else
+	} else {
 		memcpy(rxb, trx + 2, 2);
+	}
 
 	return ret;
 }
@@ -170,8 +198,11 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp,
 	xfer->len = txp->len;
 
 	ret = spi_sync(mses->spidev, msg);
-	if (ret < 0)
-		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
+	if (ret < 0) {
+		netdev_err(mse->netdev, "%s: spi_sync() failed: %d\n",
+			   __func__, ret);
+		mse->stats.xfer_err++;
+	}
 
 	return ret;
 }
@@ -192,14 +223,18 @@ static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff,
 
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0) {
-		netdev_err(mse->netdev, "%s: spi_sync() failed\n", __func__);
+		netdev_err(mse->netdev, "%s: spi_sync() failed: %d\n",
+			   __func__, ret);
+		mse->stats.xfer_err++;
 	} else if (*sof != cpu_to_be16(DET_SOF)) {
-		netdev_err(mse->netdev, "%s: SPI start of frame is invalid (0x%04x)\n",
+		netdev_dbg(mse->netdev, "%s: SPI start of frame is invalid (0x%04x)\n",
 			   __func__, *sof);
+		mse->stats.invalid_sof++;
 		ret = -EIO;
 	} else if (*dft != cpu_to_be16(DET_DFT)) {
-		netdev_err(mse->netdev, "%s: SPI frame tail is invalid (0x%04x)\n",
+		netdev_dbg(mse->netdev, "%s: SPI frame tail is invalid (0x%04x)\n",
 			   __func__, *dft);
+		mse->stats.invalid_dft++;
 		ret = -EIO;
 	}
 
@@ -237,23 +272,24 @@ static void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 		ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 		cmd_resp = be16_to_cpu(rx);
 		if (ret) {
-			net_err_ratelimited("%s: Failed to receive (%d)\n",
+			net_dbg_ratelimited("%s: Failed to receive (%d)\n",
 					    __func__, ret);
 			goto unlock_spi;
 		} else if ((cmd_resp & CMD_MASK) != CMD_RTS) {
-			net_err_ratelimited("%s: Unexpected response (0x%04x)\n",
+			net_dbg_ratelimited("%s: Unexpected response (0x%04x)\n",
 					    __func__, cmd_resp);
+			mse->stats.invalid_rts++;
 			goto unlock_spi;
 		} else {
-			net_warn_ratelimited("%s: Unexpected response to first CMD\n",
+			net_dbg_ratelimited("%s: Unexpected response to first CMD\n",
 					     __func__);
 		}
 	}
 
 	rxlen = cmd_resp & LEN_MASK;
 	if (!rxlen) {
-		net_warn_ratelimited("%s: No frame length defined\n",
-				     __func__);
+		net_dbg_ratelimited("%s: No frame length defined\n", __func__);
+		mse->stats.invalid_len++;
 		goto unlock_spi;
 	}
 
@@ -322,23 +358,24 @@ static void mse102x_tx_work(struct work_struct *work)
 		ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 		cmd_resp = be16_to_cpu(rx);
 		if (ret) {
-			net_err_ratelimited("%s: Failed to receive (%d), drop frame\n",
+			net_dbg_ratelimited("%s: Failed to receive (%d), drop frame\n",
 					    __func__, ret);
 			mse->netdev->stats.tx_dropped++;
 			goto free_skb;
 		} else if (cmd_resp != CMD_CTR) {
-			net_err_ratelimited("%s: Unexpected response (0x%04x), drop frame\n",
+			net_dbg_ratelimited("%s: Unexpected response (0x%04x), drop frame\n",
 					    __func__, cmd_resp);
 			mse->netdev->stats.tx_dropped++;
+			mse->stats.invalid_ctr++;
 			goto free_skb;
 		} else {
-			net_warn_ratelimited("%s: Unexpected response to first CMD\n",
+			net_dbg_ratelimited("%s: Unexpected response to first CMD\n",
 					     __func__);
 		}
 	}
 
 	if (mse102x_tx_frame_spi(mse, txb, pad)) {
-		net_err_ratelimited("%s: Failed to send, drop frame (%u)\n",
+		net_dbg_ratelimited("%s: Failed to send, drop frame (%u)\n",
 				    __func__, txb->len);
 		mse->netdev->stats.tx_dropped++;
 	} else {
@@ -408,7 +445,7 @@ static int mse102x_net_open(struct net_device *dev)
 	ret = request_threaded_irq(dev->irq, NULL, mse102x_irq, IRQF_ONESHOT,
 				   dev->name, mse);
 	if (ret < 0) {
-		netdev_err(dev, "failed to get irq\n");
+		netdev_err(dev, "Failed to get irq: %d\n", ret);
 		return ret;
 	}
 
@@ -489,11 +526,46 @@ static void mse102x_set_msglevel(struct net_device *dev, u32 to)
 	mse->msg_enable = to;
 }
 
+static void mse102x_get_ethtool_stats(struct net_device *dev,
+				      struct ethtool_stats *estats, u64 *data)
+{
+	struct mse102x_net *mse = netdev_priv(dev);
+	struct mse102x_stats *st = &mse->stats;
+
+	memcpy(data, st, ARRAY_SIZE(mse102x_gstrings_stats) * sizeof(u64));
+}
+
+static void mse102x_get_strings(struct net_device *dev, u32 stringset, u8 *buf)
+{
+	switch (stringset) {
+	case ETH_SS_STATS:
+		memcpy(buf, &mse102x_gstrings_stats,
+		       sizeof(mse102x_gstrings_stats));
+		break;
+	default:
+		WARN_ON(1);
+		break;
+	}
+}
+
+static int mse102x_get_sset_count(struct net_device *dev, int sset)
+{
+	switch (sset) {
+	case ETH_SS_STATS:
+		return ARRAY_SIZE(mse102x_gstrings_stats);
+	default:
+		return -EINVAL;
+	}
+}
+
 static const struct ethtool_ops mse102x_ethtool_ops = {
-	.get_drvinfo	= mse102x_get_drvinfo,
-	.get_link	= ethtool_op_get_link,
-	.get_msglevel	= mse102x_get_msglevel,
-	.set_msglevel	= mse102x_set_msglevel,
+	.get_drvinfo		= mse102x_get_drvinfo,
+	.get_link		= ethtool_op_get_link,
+	.get_msglevel		= mse102x_get_msglevel,
+	.set_msglevel		= mse102x_set_msglevel,
+	.get_ethtool_stats	= mse102x_get_ethtool_stats,
+	.get_strings		= mse102x_get_strings,
+	.get_sset_count		= mse102x_get_sset_count,
 };
 
 /* driver bus management functions */
