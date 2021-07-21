@@ -15,6 +15,9 @@
 #include <linux/spi/spi.h>
 #include <linux/of_net.h>
 
+#define MSG_DEFAULT	(NETIF_MSG_DRV | NETIF_MSG_PROBE | NETIF_MSG_LINK | \
+			 NETIF_MSG_TIMER)
+
 #define DRV_NAME	"mse102x"
 
 #define DET_CMD		0x0001
@@ -34,6 +37,8 @@
 
 #define MIN_FREQ_HZ	6000000
 #define MAX_FREQ_HZ	7142857
+
+#define TX_TIMEOUT	(2 * HZ)
 
 struct mse102x_stats {
 	u64 xfer_err;
@@ -322,26 +327,12 @@ unlock_spi:
 	mutex_unlock(&mses->lock);
 }
 
-static void mse102x_tx_work(struct work_struct *work)
+static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb)
 {
-	struct mse102x_net_spi *mses;
-	struct mse102x_net *mse;
-	struct device *dev;
-	struct sk_buff *txb;
 	unsigned int pad = 0;
 	__be16 rx = 0;
 	u16 cmd_resp;
 	int ret;
-
-	mses = container_of(work, struct mse102x_net_spi, tx_work);
-	mse = &mses->mse102x;
-	dev = &mses->spidev->dev;
-
-	mutex_lock(&mses->lock);
-
-	txb = skb_dequeue(&mse->txq);
-	if (!txb)
-		goto unlock_spi;
 
 	if (txb->len < 60)
 		pad = 60 - txb->len;
@@ -361,33 +352,59 @@ static void mse102x_tx_work(struct work_struct *work)
 			net_dbg_ratelimited("%s: Failed to receive (%d), drop frame\n",
 					    __func__, ret);
 			mse->netdev->stats.tx_dropped++;
-			goto free_skb;
+			return ret;
 		} else if (cmd_resp != CMD_CTR) {
 			net_dbg_ratelimited("%s: Unexpected response (0x%04x), drop frame\n",
 					    __func__, cmd_resp);
 			mse->netdev->stats.tx_dropped++;
 			mse->stats.invalid_ctr++;
-			goto free_skb;
+			return -EIO;
 		} else {
 			net_dbg_ratelimited("%s: Unexpected response to first CMD\n",
 					     __func__);
 		}
 	}
 
-	if (mse102x_tx_frame_spi(mse, txb, pad)) {
-		net_dbg_ratelimited("%s: Failed to send, drop frame (%u)\n",
-				    __func__, txb->len);
+	ret = mse102x_tx_frame_spi(mse, txb, pad);
+	if (ret) {
+		net_dbg_ratelimited("%s: Failed to send (%d), drop frame\n",
+				    __func__, ret);
 		mse->netdev->stats.tx_dropped++;
 	} else {
 		mse->netdev->stats.tx_bytes += txb->len;
 		mse->netdev->stats.tx_packets++;
 	}
 
-free_skb:
-	dev_kfree_skb(txb);
+	return ret;
+}
+
+static void mse102x_tx_work(struct work_struct *work)
+{
+	struct mse102x_net_spi *mses;
+	struct mse102x_net *mse;
+	struct device *dev;
+	struct sk_buff *txb;
+	bool done = false;
+
+	mses = container_of(work, struct mse102x_net_spi, tx_work);
+	mse = &mses->mse102x;
+	dev = &mses->spidev->dev;
+
+	while (!done) {
+		mutex_lock(&mses->lock);
+
+		txb = skb_dequeue(&mse->txq);
+		if (!txb) {
+			done = true;
+			goto unlock_spi;
+		}
+
+		mse102x_tx_pkt_spi(mse, txb);
+		dev_kfree_skb(txb);
 
 unlock_spi:
-	mutex_unlock(&mses->lock);
+		mutex_unlock(&mses->lock);
+	}
 
 	netif_wake_queue(mse->netdev);
 }
@@ -397,20 +414,21 @@ static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 {
 	struct mse102x_net *mse = netdev_priv(dev);
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
-
-	/* Since the chip accepts only one packet at once, stop the tx queue
-	 * now and wake it after spi transfer.
-	 */
-	netif_stop_queue(dev);
+	netdev_tx_t ret = NETDEV_TX_OK;
 
 	netif_dbg(mse, tx_queued, mse->netdev,
 		  "%s: skb %p, %d@%p\n", __func__, skb, skb->len, skb->data);
 
-	skb_queue_tail(&mse->txq, skb);
+	if (skb_queue_len(&mse->txq) >= 10) {
+		netif_stop_queue(dev);
+		ret = NETDEV_TX_BUSY;
+	} else {
+		skb_queue_tail(&mse->txq, skb);
+	}
 
 	schedule_work(&mses->tx_work);
 
-	return NETDEV_TX_OK;
+	return ret;
 }
 
 static void mse102x_init_mac(struct mse102x_net *mse, struct device_node *np)
@@ -494,11 +512,22 @@ static int mse102x_net_stop(struct net_device *dev)
 	return 0;
 }
 
+static void mse102x_tx_timeout(struct net_device *dev, unsigned int txqueue)
+{
+	struct mse102x_net *mse = netdev_priv(dev);
+
+	if (netif_msg_timer(mse))
+		netdev_err(dev, "tx timeout\n");
+
+	mse->netdev->stats.tx_errors++;
+}
+
 static const struct net_device_ops mse102x_netdev_ops = {
 	.ndo_open		= mse102x_net_open,
 	.ndo_stop		= mse102x_net_stop,
 	.ndo_start_xmit		= mse102x_start_xmit_spi,
 	.ndo_set_mac_address	= eth_mac_addr,
+	.ndo_tx_timeout		= mse102x_tx_timeout,
 	.ndo_validate_addr	= eth_validate_addr,
 };
 
@@ -651,12 +680,10 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	mse->netdev = netdev;
 
 	/* set the default message enable */
-	mse->msg_enable = netif_msg_init(msg_enable, NETIF_MSG_DRV |
-					 NETIF_MSG_PROBE | NETIF_MSG_LINK);
+	mse->msg_enable = netif_msg_init(msg_enable, MSG_DEFAULT);
 
 	skb_queue_head_init(&mse->txq);
 
-	netdev->ethtool_ops = &mse102x_ethtool_ops;
 	SET_NETDEV_DEV(netdev, dev);
 
 	dev_set_drvdata(dev, mse);
@@ -664,6 +691,8 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	netif_carrier_off(mse->netdev);
 	netdev->if_port = IF_PORT_10BASET;
 	netdev->netdev_ops = &mse102x_netdev_ops;
+	netdev->watchdog_timeo = TX_TIMEOUT;
+	netdev->ethtool_ops = &mse102x_ethtool_ops;
 
 	mse102x_init_mac(mse, dev->of_node);
 
