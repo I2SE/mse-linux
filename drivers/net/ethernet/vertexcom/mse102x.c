@@ -63,7 +63,7 @@ static const char mse102x_gstrings_stats[][ETH_GSTRING_LEN] = {
 };
 
 struct mse102x_net {
-	struct net_device	*netdev;
+	struct net_device	*ndev;
 
 	u8			rxd[8];
 	u8			txd[8];
@@ -116,7 +116,7 @@ DEFINE_SHOW_ATTRIBUTE(mse102x_info);
 
 void mse102x_init_device_debugfs(struct mse102x_net_spi *mses)
 {
-	mses->device_root = debugfs_create_dir(dev_name(&mses->mse102x.netdev->dev),
+	mses->device_root = debugfs_create_dir(dev_name(&mses->mse102x.ndev->dev),
 					       NULL);
 
 	debugfs_create_file("info", S_IFREG | 0444, mses->device_root, mses,
@@ -164,7 +164,7 @@ static void mse102x_tx_cmd_spi(struct mse102x_net *mse, u16 cmd)
 
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0) {
-		netdev_err(mse->netdev, "%s: spi_sync() failed: %d\n",
+		netdev_err(mse->ndev, "%s: spi_sync() failed: %d\n",
 			   __func__, ret);
 		mse->stats.xfer_err++;
 	}
@@ -189,7 +189,7 @@ static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0) {
-		netdev_err(mse->netdev, "%s: spi_sync() failed: %d\n",
+		netdev_err(mse->ndev, "%s: spi_sync() failed: %d\n",
 			   __func__, ret);
 		mse->stats.xfer_err++;
 	} else if (*cmd != cpu_to_be16(DET_CMD)) {
@@ -228,7 +228,7 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp,
 	u8 *ptmp;
 	int ret;
 
-	netif_dbg(mse, tx_queued, mse->netdev, "%s: skb %p, %d@%p\n",
+	netif_dbg(mse, tx_queued, mse->ndev, "%s: skb %p, %d@%p\n",
 		  __func__, txp, txp->len, txp->data);
 
 	if ((skb_headroom(txp) < DET_SOF_LEN) ||
@@ -257,7 +257,7 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp,
 
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0) {
-		netdev_err(mse->netdev, "%s: spi_sync() failed: %d\n",
+		netdev_err(mse->ndev, "%s: spi_sync() failed: %d\n",
 			   __func__, ret);
 		mse->stats.xfer_err++;
 	}
@@ -281,16 +281,16 @@ static int mse102x_rx_frame_spi(struct mse102x_net *mse, u8 *buff,
 
 	ret = spi_sync(mses->spidev, msg);
 	if (ret < 0) {
-		netdev_err(mse->netdev, "%s: spi_sync() failed: %d\n",
+		netdev_err(mse->ndev, "%s: spi_sync() failed: %d\n",
 			   __func__, ret);
 		mse->stats.xfer_err++;
 	} else if (*sof != cpu_to_be16(DET_SOF)) {
-		netdev_dbg(mse->netdev, "%s: SPI start of frame is invalid (0x%04x)\n",
+		netdev_dbg(mse->ndev, "%s: SPI start of frame is invalid (0x%04x)\n",
 			   __func__, *sof);
 		mse->stats.invalid_sof++;
 		ret = -EIO;
 	} else if (*dft != cpu_to_be16(DET_DFT)) {
-		netdev_dbg(mse->netdev, "%s: SPI frame tail is invalid (0x%04x)\n",
+		netdev_dbg(mse->ndev, "%s: SPI frame tail is invalid (0x%04x)\n",
 			   __func__, *dft);
 		mse->stats.invalid_dft++;
 		ret = -EIO;
@@ -352,7 +352,7 @@ static void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 	}
 
 	rxalign = ALIGN(rxlen + DET_SOF_LEN + DET_DFT_LEN, 4);
-	skb = netdev_alloc_skb_ip_align(mse->netdev, rxalign);
+	skb = netdev_alloc_skb_ip_align(mse->ndev, rxalign);
 	if (!skb)
 		goto unlock_spi;
 
@@ -362,7 +362,7 @@ static void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 	 */
 	rxpkt = skb_put(skb, rxlen) - DET_SOF_LEN;
 	if (mse102x_rx_frame_spi(mse, rxpkt, rxlen)) {
-		mse->netdev->stats.rx_errors++;
+		mse->ndev->stats.rx_errors++;
 		dev_kfree_skb(skb);
 		goto unlock_spi;
 	}
@@ -370,11 +370,11 @@ static void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 	if (netif_msg_pktdata(mse))
 		mse102x_dump_packet(__func__, skb->len, skb->data);
 
-	skb->protocol = eth_type_trans(skb, mse->netdev);
+	skb->protocol = eth_type_trans(skb, mse->ndev);
 	netif_rx_ni(skb);
 
-	mse->netdev->stats.rx_packets++;
-	mse->netdev->stats.rx_bytes += rxlen;
+	mse->ndev->stats.rx_packets++;
+	mse->ndev->stats.rx_bytes += rxlen;
 
 unlock_spi:
 	mutex_unlock(&mses->lock);
@@ -404,12 +404,12 @@ static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb)
 		if (ret) {
 			net_dbg_ratelimited("%s: Failed to receive (%d), drop frame\n",
 					    __func__, ret);
-			mse->netdev->stats.tx_dropped++;
+			mse->ndev->stats.tx_dropped++;
 			return ret;
 		} else if (cmd_resp != CMD_CTR) {
 			net_dbg_ratelimited("%s: Unexpected response (0x%04x), drop frame\n",
 					    __func__, cmd_resp);
-			mse->netdev->stats.tx_dropped++;
+			mse->ndev->stats.tx_dropped++;
 			mse->stats.invalid_ctr++;
 			return -EIO;
 		} else {
@@ -422,10 +422,10 @@ static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb)
 	if (ret) {
 		net_dbg_ratelimited("%s: Failed to send (%d), drop frame\n",
 				    __func__, ret);
-		mse->netdev->stats.tx_dropped++;
+		mse->ndev->stats.tx_dropped++;
 	} else {
-		mse->netdev->stats.tx_bytes += txb->len;
-		mse->netdev->stats.tx_packets++;
+		mse->ndev->stats.tx_bytes += txb->len;
+		mse->ndev->stats.tx_packets++;
 	}
 
 	return ret;
@@ -459,21 +459,21 @@ unlock_spi:
 		mutex_unlock(&mses->lock);
 	}
 
-	netif_wake_queue(mse->netdev);
+	netif_wake_queue(mse->ndev);
 }
 
 static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
-					  struct net_device *dev)
+					  struct net_device *ndev)
 {
-	struct mse102x_net *mse = netdev_priv(dev);
+	struct mse102x_net *mse = netdev_priv(ndev);
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	netdev_tx_t ret = NETDEV_TX_OK;
 
-	netif_dbg(mse, tx_queued, mse->netdev,
+	netif_dbg(mse, tx_queued, ndev,
 		  "%s: skb %p, %d@%p\n", __func__, skb, skb->len, skb->data);
 
 	if (skb_queue_len(&mse->txq) >= 10) {
-		netif_stop_queue(dev);
+		netif_stop_queue(ndev);
 		ret = NETDEV_TX_BUSY;
 	} else {
 		skb_queue_tail(&mse->txq, skb);
@@ -486,16 +486,16 @@ static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 
 static void mse102x_init_mac(struct mse102x_net *mse, struct device_node *np)
 {
-	struct net_device *dev = mse->netdev;
+	struct net_device *ndev = mse->ndev;
 	const u8 *mac_addr;
 
 	mac_addr = of_get_mac_address(np);
 	if (!IS_ERR(mac_addr)) {
-		ether_addr_copy(dev->dev_addr, mac_addr);
+		ether_addr_copy(ndev->dev_addr, mac_addr);
 		return;
 	}
 
-	eth_hw_addr_random(dev);
+	eth_hw_addr_random(ndev);
 }
 
 static irqreturn_t mse102x_irq(int irq, void *_mse)
@@ -507,16 +507,16 @@ static irqreturn_t mse102x_irq(int irq, void *_mse)
 	return IRQ_HANDLED;
 }
 
-static int mse102x_net_open(struct net_device *dev)
+static int mse102x_net_open(struct net_device *ndev)
 {
-	struct mse102x_net *mse = netdev_priv(dev);
+	struct mse102x_net *mse = netdev_priv(ndev);
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	int ret;
 
-	ret = request_threaded_irq(dev->irq, NULL, mse102x_irq, IRQF_ONESHOT,
-				   dev->name, mse);
+	ret = request_threaded_irq(ndev->irq, NULL, mse102x_irq, IRQF_ONESHOT,
+				   ndev->name, mse);
 	if (ret < 0) {
-		netdev_err(dev, "Failed to get irq: %d\n", ret);
+		netdev_err(ndev, "Failed to get irq: %d\n", ret);
 		return ret;
 	}
 
@@ -525,27 +525,27 @@ static int mse102x_net_open(struct net_device *dev)
 	 */
 	mutex_lock(&mses->lock);
 
-	netif_dbg(mse, ifup, mse->netdev, "opening\n");
+	netif_dbg(mse, ifup, ndev, "opening\n");
 
-	netif_start_queue(mse->netdev);
+	netif_start_queue(ndev);
 
-	netif_carrier_on(mse->netdev);
+	netif_carrier_on(ndev);
 
-	netif_dbg(mse, ifup, mse->netdev, "network device up\n");
+	netif_dbg(mse, ifup, ndev, "network device up\n");
 
 	mutex_unlock(&mses->lock);
 
 	return 0;
 }
 
-static int mse102x_net_stop(struct net_device *dev)
+static int mse102x_net_stop(struct net_device *ndev)
 {
-	struct mse102x_net *mse = netdev_priv(dev);
+	struct mse102x_net *mse = netdev_priv(ndev);
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
-	netif_info(mse, ifdown, dev, "shutting down\n");
+	netif_info(mse, ifdown, ndev, "shutting down\n");
 
-	netif_stop_queue(dev);
+	netif_stop_queue(ndev);
 
 	/* stop any outstanding work */
 	flush_work(&mses->tx_work);
@@ -554,25 +554,25 @@ static int mse102x_net_stop(struct net_device *dev)
 	while (!skb_queue_empty(&mse->txq)) {
 		struct sk_buff *txb = skb_dequeue(&mse->txq);
 
-		netif_dbg(mse, ifdown, mse->netdev,
+		netif_dbg(mse, ifdown, ndev,
 			  "%s: freeing txb %p\n", __func__, txb);
 
 		dev_kfree_skb(txb);
 	}
 
-	free_irq(dev->irq, mse);
+	free_irq(ndev->irq, mse);
 
 	return 0;
 }
 
-static void mse102x_tx_timeout(struct net_device *dev, unsigned int txqueue)
+static void mse102x_tx_timeout(struct net_device *ndev, unsigned int txqueue)
 {
-	struct mse102x_net *mse = netdev_priv(dev);
+	struct mse102x_net *mse = netdev_priv(ndev);
 
 	if (netif_msg_timer(mse))
-		netdev_err(dev, "tx timeout\n");
+		netdev_err(ndev, "tx timeout\n");
 
-	mse->netdev->stats.tx_errors++;
+	ndev->stats.tx_errors++;
 }
 
 static const struct net_device_ops mse102x_netdev_ops = {
@@ -586,38 +586,38 @@ static const struct net_device_ops mse102x_netdev_ops = {
 
 /* ethtool support */
 
-static void mse102x_get_drvinfo(struct net_device *dev,
+static void mse102x_get_drvinfo(struct net_device *ndev,
 				struct ethtool_drvinfo *di)
 {
 	strlcpy(di->driver, DRV_NAME, sizeof(di->driver));
 	strlcpy(di->version, "1.00", sizeof(di->version));
-	strlcpy(di->bus_info, dev_name(dev->dev.parent), sizeof(di->bus_info));
+	strlcpy(di->bus_info, dev_name(ndev->dev.parent), sizeof(di->bus_info));
 }
 
-static u32 mse102x_get_msglevel(struct net_device *dev)
+static u32 mse102x_get_msglevel(struct net_device *ndev)
 {
-	struct mse102x_net *mse = netdev_priv(dev);
+	struct mse102x_net *mse = netdev_priv(ndev);
 
 	return mse->msg_enable;
 }
 
-static void mse102x_set_msglevel(struct net_device *dev, u32 to)
+static void mse102x_set_msglevel(struct net_device *ndev, u32 to)
 {
-	struct mse102x_net *mse = netdev_priv(dev);
+	struct mse102x_net *mse = netdev_priv(ndev);
 
 	mse->msg_enable = to;
 }
 
-static void mse102x_get_ethtool_stats(struct net_device *dev,
+static void mse102x_get_ethtool_stats(struct net_device *ndev,
 				      struct ethtool_stats *estats, u64 *data)
 {
-	struct mse102x_net *mse = netdev_priv(dev);
+	struct mse102x_net *mse = netdev_priv(ndev);
 	struct mse102x_stats *st = &mse->stats;
 
 	memcpy(data, st, ARRAY_SIZE(mse102x_gstrings_stats) * sizeof(u64));
 }
 
-static void mse102x_get_strings(struct net_device *dev, u32 stringset, u8 *buf)
+static void mse102x_get_strings(struct net_device *ndev, u32 stringset, u8 *buf)
 {
 	switch (stringset) {
 	case ETH_SS_STATS:
@@ -630,7 +630,7 @@ static void mse102x_get_strings(struct net_device *dev, u32 stringset, u8 *buf)
 	}
 }
 
-static int mse102x_get_sset_count(struct net_device *dev, int sset)
+static int mse102x_get_sset_count(struct net_device *ndev, int sset)
 {
 	switch (sset) {
 	case ETH_SS_STATS:
@@ -657,11 +657,11 @@ static const struct ethtool_ops mse102x_ethtool_ops = {
 static int mse102x_suspend(struct device *dev)
 {
 	struct mse102x_net *mse = dev_get_drvdata(dev);
-	struct net_device *netdev = mse->netdev;
+	struct net_device *ndev = mse->ndev;
 
-	if (netif_running(netdev)) {
-		netif_device_detach(netdev);
-		mse102x_net_stop(netdev);
+	if (netif_running(ndev)) {
+		netif_device_detach(ndev);
+		mse102x_net_stop(ndev);
 	}
 
 	return 0;
@@ -670,11 +670,11 @@ static int mse102x_suspend(struct device *dev)
 static int mse102x_resume(struct device *dev)
 {
 	struct mse102x_net *mse = dev_get_drvdata(dev);
-	struct net_device *netdev = mse->netdev;
+	struct net_device *ndev = mse->ndev;
 
-	if (netif_running(netdev)) {
-		mse102x_net_open(netdev);
-		netif_device_attach(netdev);
+	if (netif_running(ndev)) {
+		mse102x_net_open(ndev);
+		netif_device_attach(ndev);
 	}
 
 	return 0;
@@ -687,7 +687,7 @@ static int mse102x_probe_spi(struct spi_device *spi)
 {
 	struct device *dev = &spi->dev;
 	struct mse102x_net_spi *mses;
-	struct net_device *netdev;
+	struct net_device *ndev;
 	struct mse102x_net *mse;
 	int ret;
 
@@ -711,14 +711,14 @@ static int mse102x_probe_spi(struct spi_device *spi)
 		return ret;
 	}
 
-	netdev = devm_alloc_etherdev(dev, sizeof(struct mse102x_net_spi));
-	if (!netdev)
+	ndev = devm_alloc_etherdev(dev, sizeof(struct mse102x_net_spi));
+	if (!ndev)
 		return -ENOMEM;
 
-	netdev->priv_flags &= ~IFF_TX_SKB_SHARING;
-	netdev->tx_queue_len = 100;
+	ndev->priv_flags &= ~IFF_TX_SKB_SHARING;
+	ndev->tx_queue_len = 100;
 
-	mse = netdev_priv(netdev);
+	mse = netdev_priv(ndev);
 	mses = to_mse102x_spi(mse);
 
 	mses->spidev = spi;
@@ -729,27 +729,27 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	spi_message_init(&mses->spi_msg);
 	spi_message_add_tail(&mses->spi_xfer, &mses->spi_msg);
 
-	netdev->irq = spi->irq;
-	mse->netdev = netdev;
+	ndev->irq = spi->irq;
+	mse->ndev = ndev;
 
 	/* set the default message enable */
 	mse->msg_enable = netif_msg_init(msg_enable, MSG_DEFAULT);
 
 	skb_queue_head_init(&mse->txq);
 
-	SET_NETDEV_DEV(netdev, dev);
+	SET_NETDEV_DEV(ndev, dev);
 
 	dev_set_drvdata(dev, mse);
 
-	netif_carrier_off(mse->netdev);
-	netdev->if_port = IF_PORT_10BASET;
-	netdev->netdev_ops = &mse102x_netdev_ops;
-	netdev->watchdog_timeo = TX_TIMEOUT;
-	netdev->ethtool_ops = &mse102x_ethtool_ops;
+	netif_carrier_off(mse->ndev);
+	ndev->if_port = IF_PORT_10BASET;
+	ndev->netdev_ops = &mse102x_netdev_ops;
+	ndev->watchdog_timeo = TX_TIMEOUT;
+	ndev->ethtool_ops = &mse102x_ethtool_ops;
 
 	mse102x_init_mac(mse, dev->of_node);
 
-	ret = register_netdev(netdev);
+	ret = register_netdev(ndev);
 	if (ret) {
 		dev_err(dev, "failed to register network device: %d\n", ret);
 		return ret;
@@ -762,14 +762,14 @@ static int mse102x_probe_spi(struct spi_device *spi)
 
 static int mse102x_remove_spi(struct spi_device *spi)
 {
-	struct mse102x_net *priv = dev_get_drvdata(&spi->dev);
-	struct mse102x_net_spi *mses = to_mse102x_spi(priv);
+	struct mse102x_net *mse = dev_get_drvdata(&spi->dev);
+	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 
-	if (netif_msg_drv(priv))
+	if (netif_msg_drv(mse))
 		dev_info(&spi->dev, "remove\n");
 
 	mse102x_remove_device_debugfs(mses);
-	unregister_netdev(priv->netdev);
+	unregister_netdev(mse->ndev);
 
 	return 0;
 }
