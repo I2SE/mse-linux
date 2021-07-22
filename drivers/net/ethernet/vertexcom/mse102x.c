@@ -11,6 +11,8 @@
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/cache.h>
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
 
 #include <linux/spi/spi.h>
 #include <linux/of_net.h>
@@ -79,6 +81,10 @@ struct mse102x_net_spi {
 	struct spi_device	*spidev;
 	struct spi_message	spi_msg;
 	struct spi_transfer	spi_xfer;
+
+#ifdef CONFIG_DEBUG_FS
+	struct dentry		*device_root;
+#endif
 };
 
 #define to_mse102x_spi(mse) container_of((mse), struct mse102x_net_spi, mse102x)
@@ -86,6 +92,53 @@ struct mse102x_net_spi {
 static int msg_enable;
 module_param_named(message, msg_enable, int, 0);
 MODULE_PARM_DESC(message, "Message verbosity level (0=none, 31=all)");
+
+#ifdef CONFIG_DEBUG_FS
+
+static int mse102x_info_show(struct seq_file *s, void *what)
+{
+	struct mse102x_net_spi *mses = s->private;
+
+	seq_printf(s, "TX ring size        : %u\n",
+		   skb_queue_len(&mses->mse102x.txq));
+
+	seq_printf(s, "IRQ                 : %d\n",
+		   mses->spidev->irq);
+
+	seq_printf(s, "SPI effective speed : %lu\n",
+		   (unsigned long)mses->spi_xfer.effective_speed_hz);
+	seq_printf(s, "SPI mode            : %x\n",
+		   mses->spidev->mode);
+
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(mse102x_info);
+
+void mse102x_init_device_debugfs(struct mse102x_net_spi *mses)
+{
+	mses->device_root = debugfs_create_dir(dev_name(&mses->mse102x.netdev->dev),
+					       NULL);
+
+	debugfs_create_file("info", S_IFREG | 0444, mses->device_root, mses,
+			    &mse102x_info_fops);
+}
+
+void mse102x_remove_device_debugfs(struct mse102x_net_spi *mses)
+{
+	debugfs_remove_recursive(mses->device_root);
+}
+
+#else /* CONFIG_DEBUG_FS */
+
+void mse102x_init_device_debugfs(struct mse102x_net_spi *mses)
+{
+}
+
+void mse102x_remove_device_debugfs(struct mse102x_net_spi *mses)
+{
+}
+
+#endif
 
 /* SPI register read/write calls.
  *
@@ -702,16 +755,20 @@ static int mse102x_probe_spi(struct spi_device *spi)
 		return ret;
 	}
 
+	mse102x_init_device_debugfs(mses);
+
 	return 0;
 }
 
 static int mse102x_remove_spi(struct spi_device *spi)
 {
 	struct mse102x_net *priv = dev_get_drvdata(&spi->dev);
+	struct mse102x_net_spi *mses = to_mse102x_spi(priv);
 
 	if (netif_msg_drv(priv))
 		dev_info(&spi->dev, "remove\n");
 
+	mse102x_remove_device_debugfs(mses);
 	unregister_netdev(priv->netdev);
 
 	return 0;
