@@ -340,7 +340,7 @@ static void mse102x_rx_pkts_spi(struct mse102x_net *mse)
 			goto unlock_spi;
 		} else {
 			net_dbg_ratelimited("%s: Unexpected response to first CMD\n",
-					     __func__);
+					    __func__);
 		}
 	}
 
@@ -412,10 +412,10 @@ static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb)
 			mse->ndev->stats.tx_dropped++;
 			mse->stats.invalid_ctr++;
 			return -EIO;
-		} else {
-			net_dbg_ratelimited("%s: Unexpected response to first CMD\n",
-					     __func__);
 		}
+
+		net_dbg_ratelimited("%s: Unexpected response to first CMD\n",
+				    __func__);
 	}
 
 	ret = mse102x_tx_frame_spi(mse, txb, pad);
@@ -698,8 +698,8 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	if (!spi->max_speed_hz)
 		spi->max_speed_hz = MAX_FREQ_HZ;
 
-	if ((spi->max_speed_hz < MIN_FREQ_HZ) ||
-	    (spi->max_speed_hz > MAX_FREQ_HZ)) {
+	if (spi->max_speed_hz < MIN_FREQ_HZ ||
+	    spi->max_speed_hz > MAX_FREQ_HZ) {
 		dev_err(&spi->dev, "SPI max frequency out of range (min: %u, max: %u)\n",
 			MIN_FREQ_HZ, MAX_FREQ_HZ);
 		return -EINVAL;
