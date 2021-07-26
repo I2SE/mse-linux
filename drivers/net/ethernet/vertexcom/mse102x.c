@@ -48,6 +48,7 @@ struct mse102x_stats {
 	u64 invalid_len;
 	u64 invalid_rts;
 	u64 invalid_sof;
+	u64 tx_timeout;
 };
 
 static const char mse102x_gstrings_stats[][ETH_GSTRING_LEN] = {
@@ -58,6 +59,7 @@ static const char mse102x_gstrings_stats[][ETH_GSTRING_LEN] = {
 	"Invalid frame length",
 	"Invalid RTS",
 	"Invalid SOF",
+	"TX timeout",
 };
 
 struct mse102x_net {
@@ -378,52 +380,50 @@ unlock_spi:
 	mutex_unlock(&mses->lock);
 }
 
-static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb)
+static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb,
+			      unsigned long timeout)
 {
 	unsigned int pad = 0;
 	__be16 rx = 0;
 	u16 cmd_resp;
 	int ret;
+	bool first = true;
 
 	if (txb->len < 60)
 		pad = 60 - txb->len;
 
-	mse102x_tx_cmd_spi(mse, CMD_RTS | (txb->len + pad));
-	ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
-	cmd_resp = be16_to_cpu(rx);
+	while (1) {
+		if (time_after(jiffies, timeout))
+			return -ETIMEDOUT;
 
-	if (ret || cmd_resp != CMD_CTR) {
-		usleep_range(50, 100);
-
-		/* Retransmit CMD_RTS */
 		mse102x_tx_cmd_spi(mse, CMD_RTS | (txb->len + pad));
 		ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 		cmd_resp = be16_to_cpu(rx);
+
 		if (ret) {
-			net_dbg_ratelimited("%s: Failed to receive (%d), drop frame\n",
+			net_dbg_ratelimited("%s: Failed to receive (%d)\n",
 					    __func__, ret);
-			mse->ndev->stats.tx_dropped++;
-			return ret;
 		} else if (cmd_resp != CMD_CTR) {
-			net_dbg_ratelimited("%s: Unexpected response (0x%04x), drop frame\n",
+			net_dbg_ratelimited("%s: Unexpected response (0x%04x)\n",
 					    __func__, cmd_resp);
-			mse->ndev->stats.tx_dropped++;
 			mse->stats.invalid_ctr++;
-			return -EIO;
+		} else {
+			break;
 		}
 
-		net_dbg_ratelimited("%s: Unexpected response to first CMD\n",
-				    __func__);
-	}
+		if (first) {
+			netif_stop_queue(mse->ndev);
+			usleep_range(50, 100);
+			first = false;
+		} else {
+			msleep(20);
+		}
+	};
 
 	ret = mse102x_tx_frame_spi(mse, txb, pad);
 	if (ret) {
 		net_dbg_ratelimited("%s: Failed to send (%d), drop frame\n",
 				    __func__, ret);
-		mse->ndev->stats.tx_dropped++;
-	} else {
-		mse->ndev->stats.tx_bytes += txb->len;
-		mse->ndev->stats.tx_packets++;
 	}
 
 	return ret;
@@ -431,11 +431,13 @@ static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb)
 
 static void mse102x_tx_work(struct work_struct *work)
 {
+	unsigned long timeout = jiffies + msecs_to_jiffies(1000);
 	struct mse102x_net_spi *mses;
 	struct mse102x_net *mse;
 	struct device *dev;
 	struct sk_buff *txb;
 	bool done = false;
+	int ret = 0;
 
 	mses = container_of(work, struct mse102x_net_spi, tx_work);
 	mse = &mses->mse102x;
@@ -450,11 +452,25 @@ static void mse102x_tx_work(struct work_struct *work)
 			goto unlock_spi;
 		}
 
-		mse102x_tx_pkt_spi(mse, txb);
+		ret = mse102x_tx_pkt_spi(mse, txb, timeout);
+		if (ret) {
+			mse->ndev->stats.tx_dropped++;
+		} else {
+			mse->ndev->stats.tx_bytes += txb->len;
+			mse->ndev->stats.tx_packets++;
+		}
+
 		dev_kfree_skb(txb);
 
 unlock_spi:
 		mutex_unlock(&mses->lock);
+	}
+
+	if (ret == -ETIMEDOUT) {
+		if (netif_msg_timer(mse))
+			netdev_err(mse->ndev, "tx timeout\n");
+
+		mse->stats.tx_timeout++;
 	}
 
 	netif_wake_queue(mse->ndev);
