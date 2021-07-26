@@ -40,8 +40,6 @@
 #define MIN_FREQ_HZ	6000000
 #define MAX_FREQ_HZ	7142857
 
-#define TX_TIMEOUT	(2 * HZ)
-
 struct mse102x_stats {
 	u64 xfer_err;
 	u64 invalid_cmd;
@@ -565,22 +563,11 @@ static int mse102x_net_stop(struct net_device *ndev)
 	return 0;
 }
 
-static void mse102x_tx_timeout(struct net_device *ndev, unsigned int txqueue)
-{
-	struct mse102x_net *mse = netdev_priv(ndev);
-
-	if (netif_msg_timer(mse))
-		netdev_err(ndev, "tx timeout\n");
-
-	ndev->stats.tx_errors++;
-}
-
 static const struct net_device_ops mse102x_netdev_ops = {
 	.ndo_open		= mse102x_net_open,
 	.ndo_stop		= mse102x_net_stop,
 	.ndo_start_xmit		= mse102x_start_xmit_spi,
 	.ndo_set_mac_address	= eth_mac_addr,
-	.ndo_tx_timeout		= mse102x_tx_timeout,
 	.ndo_validate_addr	= eth_validate_addr,
 };
 
@@ -744,7 +731,6 @@ static int mse102x_probe_spi(struct spi_device *spi)
 	netif_carrier_off(mse->ndev);
 	ndev->if_port = IF_PORT_10BASET;
 	ndev->netdev_ops = &mse102x_netdev_ops;
-	ndev->watchdog_timeo = TX_TIMEOUT;
 	ndev->ethtool_ops = &mse102x_ethtool_ops;
 
 	mse102x_init_mac(mse, dev->of_node);
