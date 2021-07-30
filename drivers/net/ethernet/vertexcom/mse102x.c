@@ -381,7 +381,7 @@ unlock_spi:
 }
 
 static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb,
-			      unsigned long timeout)
+			      unsigned long work_timeout)
 {
 	unsigned int pad = 0;
 	__be16 rx = 0;
@@ -393,7 +393,7 @@ static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb,
 		pad = 60 - txb->len;
 
 	while (1) {
-		if (time_after(jiffies, timeout))
+		if (time_after(jiffies, work_timeout))
 			return -ETIMEDOUT;
 
 		mse102x_tx_cmd_spi(mse, CMD_RTS | (txb->len + pad));
@@ -431,7 +431,7 @@ static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb,
 
 static void mse102x_tx_work(struct work_struct *work)
 {
-	unsigned long timeout = jiffies + msecs_to_jiffies(1000);
+	unsigned long work_timeout = jiffies + msecs_to_jiffies(1000);
 	struct mse102x_net_spi *mses;
 	struct mse102x_net *mse;
 	struct device *dev;
@@ -452,7 +452,7 @@ static void mse102x_tx_work(struct work_struct *work)
 			goto unlock_spi;
 		}
 
-		ret = mse102x_tx_pkt_spi(mse, txb, timeout);
+		ret = mse102x_tx_pkt_spi(mse, txb, work_timeout);
 		if (ret) {
 			mse->ndev->stats.tx_dropped++;
 		} else {
@@ -468,7 +468,7 @@ unlock_spi:
 
 	if (ret == -ETIMEDOUT) {
 		if (netif_msg_timer(mse))
-			netdev_err(mse->ndev, "tx timeout\n");
+			netdev_err(mse->ndev, "tx work timeout\n");
 
 		mse->stats.tx_timeout++;
 	}
