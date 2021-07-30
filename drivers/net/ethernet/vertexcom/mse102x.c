@@ -393,6 +393,10 @@ static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb,
 		pad = 60 - txb->len;
 
 	while (1) {
+		/* It's not predictable how long / many retries it takes to
+		 * send at least one packet, so TX timeouts are possible.
+		 * That's the reason why the netdev watchdog is not used here.
+		 */
 		if (time_after(jiffies, work_timeout))
 			return -ETIMEDOUT;
 
@@ -408,11 +412,14 @@ static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb,
 					    __func__, cmd_resp);
 			mse->stats.invalid_ctr++;
 		} else {
+			/* ready to send frame */
 			break;
 		}
 
 		if (first) {
+			/* throttle at first issue */
 			netif_stop_queue(mse->ndev);
+			/* fast retry */
 			usleep_range(50, 100);
 			first = false;
 		} else {
@@ -429,8 +436,11 @@ static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb,
 	return ret;
 }
 
+#define TX_QUEUE_MAX 10
+
 static void mse102x_tx_work(struct work_struct *work)
 {
+	/* Make sure timeout is sufficient to transfer TX_QUEUE_MAX frames */
 	unsigned long work_timeout = jiffies + msecs_to_jiffies(1000);
 	struct mse102x_net_spi *mses;
 	struct mse102x_net *mse;
@@ -486,7 +496,7 @@ static netdev_tx_t mse102x_start_xmit_spi(struct sk_buff *skb,
 	netif_dbg(mse, tx_queued, ndev,
 		  "%s: skb %p, %d@%p\n", __func__, skb, skb->len, skb->data);
 
-	if (skb_queue_len(&mse->txq) >= 10) {
+	if (skb_queue_len(&mse->txq) >= TX_QUEUE_MAX) {
 		netif_stop_queue(ndev);
 		ret = NETDEV_TX_BUSY;
 	} else {
@@ -512,6 +522,7 @@ static void mse102x_init_mac(struct mse102x_net *mse, struct device_node *np)
 	eth_hw_addr_random(ndev);
 }
 
+/* Assumption: this is called for every incoming packet */
 static irqreturn_t mse102x_irq(int irq, void *_mse)
 {
 	struct mse102x_net *mse = _mse;
@@ -696,7 +707,8 @@ static int mse102x_probe_spi(struct spi_device *spi)
 
 	spi->bits_per_word = 8;
 	spi->mode |= SPI_MODE_3;
-	spi->master->min_speed_hz = MIN_FREQ_HZ; // enforce minimum speed for device
+	/* enforce minimum speed to ensure device functionality */
+	spi->master->min_speed_hz = MIN_FREQ_HZ;
 
 	if (!spi->max_speed_hz)
 		spi->max_speed_hz = MAX_FREQ_HZ;
