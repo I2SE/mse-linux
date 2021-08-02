@@ -308,7 +308,7 @@ static void mse102x_dump_packet(const char *msg, int len, const char *data)
 		       data, len, true);
 }
 
-static void mse102x_rx_pkts_spi(struct mse102x_net *mse)
+static void mse102x_rx_pkt_spi(struct mse102x_net *mse)
 {
 	struct mse102x_net_spi *mses = to_mse102x_spi(mse);
 	struct sk_buff *skb;
@@ -529,7 +529,7 @@ static irqreturn_t mse102x_irq(int irq, void *_mse)
 {
 	struct mse102x_net *mse = _mse;
 
-	mse102x_rx_pkts_spi(mse);
+	mse102x_rx_pkt_spi(mse);
 
 	return IRQ_HANDLED;
 }
