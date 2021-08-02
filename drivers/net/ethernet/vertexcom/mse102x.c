@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (C) 2021 in-tech smart charging GmbH
+ *
+ * driver is based on micrel/ks8851_spi.c
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
