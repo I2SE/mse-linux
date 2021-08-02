@@ -446,14 +446,12 @@ static void mse102x_tx_work(struct work_struct *work)
 	unsigned long work_timeout = jiffies + msecs_to_jiffies(1000);
 	struct mse102x_net_spi *mses;
 	struct mse102x_net *mse;
-	struct device *dev;
 	struct sk_buff *txb;
 	bool done = false;
 	int ret = 0;
 
 	mses = container_of(work, struct mse102x_net_spi, tx_work);
 	mse = &mses->mse102x;
-	dev = &mses->spidev->dev;
 
 	while (!done) {
 		mutex_lock(&mses->lock);
