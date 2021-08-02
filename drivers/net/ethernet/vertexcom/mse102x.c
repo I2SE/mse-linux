@@ -195,6 +195,8 @@ static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 			   __func__, ret);
 		mse->stats.xfer_err++;
 	} else if (*cmd != cpu_to_be16(DET_CMD)) {
+		net_dbg_ratelimited("%s: Unexpected response (0x%04x)\n",
+				    __func__, *cmd);
 		mse->stats.invalid_cmd++;
 		ret = -EIO;
 	} else {
@@ -332,8 +334,6 @@ static void mse102x_rx_pkt_spi(struct mse102x_net *mse)
 		ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 		cmd_resp = be16_to_cpu(rx);
 		if (ret) {
-			net_dbg_ratelimited("%s: Failed to receive (%d)\n",
-					    __func__, ret);
 			goto unlock_spi;
 		} else if ((cmd_resp & CMD_MASK) != CMD_RTS) {
 			net_dbg_ratelimited("%s: Unexpected response (0x%04x)\n",
@@ -406,16 +406,14 @@ static int mse102x_tx_pkt_spi(struct mse102x_net *mse, struct sk_buff *txb,
 		ret = mse102x_rx_cmd_spi(mse, (u8 *)&rx);
 		cmd_resp = be16_to_cpu(rx);
 
-		if (ret) {
-			net_dbg_ratelimited("%s: Failed to receive (%d)\n",
-					    __func__, ret);
-		} else if (cmd_resp != CMD_CTR) {
+		if (!ret) {
+			/* ready to send frame ? */
+			if (cmd_resp == CMD_CTR)
+				break;
+
 			net_dbg_ratelimited("%s: Unexpected response (0x%04x)\n",
 					    __func__, cmd_resp);
 			mse->stats.invalid_ctr++;
-		} else {
-			/* ready to send frame */
-			break;
 		}
 
 		if (first) {
