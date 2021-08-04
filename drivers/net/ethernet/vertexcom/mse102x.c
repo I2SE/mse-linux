@@ -206,20 +206,18 @@ static int mse102x_rx_cmd_spi(struct mse102x_net *mse, u8 *rxb)
 	return ret;
 }
 
-static void mse102x_create_header(u8 *buf)
+static inline void mse102x_push_header(struct sk_buff *skb)
 {
-	__be16 sof = cpu_to_be16(DET_SOF);
+	__be16 *header = skb_push(skb, DET_SOF_LEN);
 
-	buf[0] = sof & 0xFF;
-	buf[1] = (sof >> 8) & 0xFF;
+	*header = cpu_to_be16(DET_SOF);
 }
 
-static void mse102x_create_footer(u8 *buf)
+static inline void mse102x_put_footer(struct sk_buff *skb)
 {
-	__be16 dft = cpu_to_be16(DET_DFT);
+	__be16 *footer = skb_put(skb, DET_DFT_LEN);
 
-	buf[0] = dft & 0xFF;
-	buf[1] = (dft >> 8) & 0xFF;
+	*footer = cpu_to_be16(DET_DFT);
 }
 
 static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp,
@@ -229,7 +227,6 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp,
 	struct spi_transfer *xfer = &mses->spi_xfer;
 	struct spi_message *msg = &mses->spi_msg;
 	struct sk_buff *tskb;
-	u8 *ptmp;
 	int ret;
 
 	netif_dbg(mse, tx_queued, mse->ndev, "%s: skb %p, %d@%p\n",
@@ -246,14 +243,12 @@ static int mse102x_tx_frame_spi(struct mse102x_net *mse, struct sk_buff *txp,
 		txp = tskb;
 	}
 
-	ptmp = skb_push(txp, DET_SOF_LEN);
-	mse102x_create_header(ptmp);
+	mse102x_push_header(txp);
 
 	if (pad)
-		ptmp = skb_put_zero(txp, pad);
+		skb_put_zero(txp, pad);
 
-	ptmp = skb_put(txp, DET_DFT_LEN);
-	mse102x_create_footer(ptmp);
+	mse102x_put_footer(txp);
 
 	xfer->tx_buf = txp->data;
 	xfer->rx_buf = NULL;
