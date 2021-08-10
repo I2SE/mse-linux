@@ -24,7 +24,9 @@ allOf:
 
 properties:
   compatible:
-    const: vertexcom,mse1021
+    enum:
+      - vertexcom,mse1021
+      - vertexcom,mse1022
 
   reg:
     maxItems: 1
